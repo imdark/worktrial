@@ -1,0 +1,32 @@
+# Stage 0 smoke config: the same run with no human attached.
+#
+# Identical to fake_teleop.yaml apart from the `source` block.
+
+robot:
+  type: fake
+  spec: ../robots/specs/so101.yaml
+  image_size: [64, 48]
+
+source:
+  type: policy
+  policy: {type: constant}
+
+success:
+  type: fake
+  success_after: 40
+
+reset:
+  type: none
+
+safety:
+  type: sim_watchdog
+  max_steps: 200
+
+task:
+  name: stage0_smoke
+
+record:
+  fps: 30
+  root: data/stage0_smoke
+
+seed: 0

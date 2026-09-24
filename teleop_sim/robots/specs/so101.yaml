@@ -1,0 +1,64 @@
+# SO-101 follower arm.
+#
+# PLACEHOLDER VALUES. Joint limits, camera poses and FOVs here are plausible
+# but unverified -- they have not been checked against the MuJoCo Menagerie
+# model or against physical hardware. Stage 1 corrects the limits against the
+# MJCF; Stage 9 corrects the camera extrinsics against a hand-eye calibration.
+# Treat every number below as a guess until then.
+#
+# All joint values are RADIANS.
+
+name: so101
+version: "1"
+mjcf_path: ../../../assets/so101/scene.xml
+urdf_path: null
+
+joints:
+  - {name: shoulder_pan,  lower: -1.92, upper: 1.92, vel_limit: 3.0, effort_limit: 2.0}
+  - {name: shoulder_lift, lower: -1.75, upper: 1.75, vel_limit: 3.0, effort_limit: 2.0}
+  - {name: elbow_flex,    lower: -1.69, upper: 1.69, vel_limit: 3.0, effort_limit: 2.0}
+  - {name: wrist_flex,    lower: -1.66, upper: 1.66, vel_limit: 3.0, effort_limit: 1.5}
+  - {name: wrist_roll,    lower: -2.79, upper: 2.79, vel_limit: 3.0, effort_limit: 1.5}
+
+ee_link: gripper_link
+
+# Slide joint, metres of jaw travel. open_pos/closed_pos must equal the
+# gripper joint's range in the MJCF: commanding an extreme drives the jaw
+# into its hard stop, which is what makes the normalised reading saturate
+# at exactly 0.0 and 1.0.
+gripper:
+  joint: gripper
+  open_pos: 0.0
+  closed_pos: 0.024
+
+cameras:
+  - name: wrist
+    mount: gripper_link
+    pose: [0.0, -0.03, 0.01, 0.266934, 0.963715, 0.0, 0.0]
+    fovy_deg: 75.0
+    resolution: [640, 480]
+  - name: front
+    mount: world
+    pose: [0.75, 0.35, 0.45, 0.430329, 0.288632, 0.476419, 0.710306]
+    fovy_deg: 60.0
+    resolution: [640, 480]
+
+# Safety envelope for the end effector. Enforced by the watchdog once
+# autonomous operation begins.
+workspace:
+  lower: [-0.35, -0.35, -0.02]
+  upper: [0.35, 0.35, 0.45]
+
+default_control_mode: joint_position
+supported_modes: [joint_position]
+control_hz: 30.0
+
+# What this arm can actually measure. All false: position-controlled hobby
+# servos report neither force nor current. The startup check uses this to
+# reject a configured force limit that could never fire, and to reject a
+# policy that consumes a signal this robot cannot produce.
+sensing:
+  joint_current: false
+  joint_torque: false
+  ee_wrench: false
+  estop: false

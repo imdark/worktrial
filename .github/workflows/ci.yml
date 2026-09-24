@@ -1,0 +1,30 @@
+name: ci
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      # Only the `dev` extra. If anything in teleop_sim/core or teleop_sim/control
+      # grows a dependency on mujoco / torch / a hardware SDK, this job fails to
+      # import and we find out immediately.
+      - run: pip install -e ".[dev]"
+      - run: ruff check .
+      - run: pytest
+
+      # Every test file in its own process. A full-suite run hides registration
+      # that depends on import order: one file imports a backend and every other
+      # file silently benefits. This is how that class of bug gets caught.
+      - name: pytest (per-file isolation)
+        run: |
+          for file in tests/test_*.py tests/conformance/test_*.py; do
+            echo "== $file"
+            pytest "$file" -q || exit 1
+          done

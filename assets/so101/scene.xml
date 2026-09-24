@@ -1,0 +1,43 @@
+<!-- Arm on a table, with a graspable cube and a third-person camera.
+
+     Object placement lives here; randomisation of it arrives at Stage 4. -->
+<mujoco model="so101_scene">
+  <include file="so101.xml"/>
+
+  <visual>
+    <global offwidth="1280" offheight="960"/>
+    <quality shadowsize="2048"/>
+    <headlight ambient="0.35 0.35 0.35" diffuse="0.5 0.5 0.5"/>
+  </visual>
+
+  <asset>
+    <texture name="skybox" type="skybox" builtin="gradient"
+             rgb1="0.35 0.42 0.52" rgb2="0.10 0.12 0.16" width="256" height="256"/>
+    <texture name="tabletop_tex" type="2d" builtin="checker"
+             rgb1="0.62 0.60 0.56" rgb2="0.52 0.50 0.47" width="300" height="300"/>
+    <material name="tabletop" texture="tabletop_tex" texrepeat="6 6" reflectance="0.05"/>
+  </asset>
+
+  <worldbody>
+    <light name="key"  pos="0.35 0.25 0.9" dir="-0.35 -0.25 -0.9" diffuse="0.7 0.7 0.7"/>
+    <light name="fill" pos="-0.3 -0.3 0.8" dir="0.3 0.3 -0.8"   diffuse="0.35 0.35 0.35"/>
+
+    <geom name="tabletop" type="plane" size="0.6 0.6 0.02" material="tabletop"
+          friction="1.0 0.01 0.001"/>
+
+    <!-- Third-person view, aimed at mid-arm rather than at the base origin,
+         which sits on the table and pushed the arm's upper reach out of frame.
+         Fixed rather than targetbody so the pose is deterministic and the spec
+         can declare it. Three-quarter rather than straight-on: from directly in
+         front the arm is edge-on and its reach toward the camera is invisible. -->
+    <camera name="front" pos="0.75 0.35 0.45"
+            xyaxes="-0.463018 0.886349 0.000000 -0.336311 -0.175685 0.925219" fovy="60"/>
+
+    <body name="cube_red" pos="0.18 0.0 0.02">
+      <freejoint name="cube_red_free"/>
+      <geom name="cube_red_geom" type="box" size="0.018 0.018 0.018"
+            rgba="0.80 0.20 0.18 1" density="400"
+            friction="1.4 0.02 0.001" solimp="0.95 0.99 0.001" solref="0.005 1"/>
+    </body>
+  </worldbody>
+</mujoco>

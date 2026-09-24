@@ -1,0 +1,35 @@
+# Stage 0 smoke config: a human drives a robot that has no physics.
+#
+# This file and fake_policy.yaml are identical apart from the `source` block.
+# tests/test_source_swap.py asserts exactly that, because it is the claim the
+# whole autonomy track rests on.
+
+robot:
+  type: fake
+  spec: ../robots/specs/so101.yaml
+  image_size: [64, 48]
+
+source:
+  type: teleop
+  device: {type: fake}
+  retarget: {type: identity}
+
+success:
+  type: fake
+  success_after: 40
+
+reset:
+  type: none
+
+safety:
+  type: sim_watchdog
+  max_steps: 200
+
+task:
+  name: stage0_smoke
+
+record:
+  fps: 30
+  root: data/stage0_smoke
+
+seed: 0

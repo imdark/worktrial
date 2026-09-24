@@ -1,0 +1,105 @@
+<!-- SO-101 follower arm, approximate.
+
+     PLACEHOLDER GEOMETRY. Link lengths and inertias are plausible but are not
+     taken from the real SO-101. What this model is for right now is exercising
+     the Robot interface end to end: named joints, position actuators, a
+     normalisable gripper, and a wrist camera.
+
+     Swapping in the MuJoCo Menagerie model later is a `mjcf_path` edit in
+     robots/specs/so101.yaml -- that is the point of hardware-as-data. The
+     spec<->model consistency test will catch any limit that moves.
+
+     Joint limits here MUST match robots/specs/so101.yaml. tests/test_mjcf_spec.py
+     enforces it; a spec that clips against a bound the model does not have looks
+     exactly like bad tracking. -->
+<mujoco model="so101">
+  <compiler angle="radian" autolimits="true"/>
+  <!-- timestep = 1/600 s, so a 30 Hz control period is exactly 20 substeps.
+       At 0.002 it was 16.67, which MujocoRobot rounded to 17 and every
+       control step ran 2% long. tests/test_mjcf_spec.py guards this. -->
+  <option timestep="0.0016666666666666668" integrator="implicitfast"/>
+
+  <default>
+    <default class="so101">
+      <joint damping="1.2" armature="0.02" frictionloss="0.02"/>
+      <position kp="30" dampratio="1" forcerange="-12 12"/>
+      <geom type="capsule" rgba="0.28 0.32 0.38 1" density="900"
+            friction="1.0 0.01 0.001"/>
+    </default>
+    <default class="finger">
+      <geom type="box" rgba="0.85 0.55 0.15 1" density="600"
+            friction="2.0 0.05 0.001" solimp="0.95 0.99 0.001" solref="0.004 1"/>
+    </default>
+  </default>
+
+  <worldbody>
+    <body name="base" pos="0 0 0" childclass="so101">
+      <geom name="base_geom" type="cylinder" size="0.045 0.025" pos="0 0 0.025"/>
+
+      <body name="shoulder_pan_link" pos="0 0 0.05">
+        <joint name="shoulder_pan" axis="0 0 1" range="-1.92 1.92"/>
+        <geom name="shoulder_pan_geom" fromto="0 0 0 0 0 0.03" size="0.032"/>
+
+        <body name="shoulder_lift_link" pos="0 0 0.03">
+          <joint name="shoulder_lift" axis="0 1 0" range="-1.75 1.75"/>
+          <geom name="upper_arm_geom" fromto="0 0 0 0 0 0.11" size="0.026"/>
+
+          <body name="elbow_flex_link" pos="0 0 0.11">
+            <joint name="elbow_flex" axis="0 1 0" range="-1.69 1.69"/>
+            <geom name="forearm_geom" fromto="0 0 0 0 0 0.11" size="0.023"/>
+
+            <body name="wrist_flex_link" pos="0 0 0.11">
+              <joint name="wrist_flex" axis="0 1 0" range="-1.66 1.66"/>
+              <geom name="wrist_geom" fromto="0 0 0 0 0 0.045" size="0.020"/>
+
+              <body name="wrist_roll_link" pos="0 0 0.045">
+                <joint name="wrist_roll" axis="0 0 1" range="-2.79 2.79"/>
+                <geom name="wrist_roll_geom" fromto="0 0 0 0 0 0.025" size="0.019"/>
+
+                <body name="gripper_link" pos="0 0 0.025">
+                  <geom name="palm_geom" type="box" size="0.022 0.014 0.012"
+                        pos="0 0 0.012"/>
+
+                  <!-- Eye-in-hand: offset in -y and set back behind the jaws,
+                       angled at the grasp point around (0, 0, 0.06). Mounted on
+                       top of a finger it saw mostly finger. Wide-angle, as real
+                       wrist cameras are. -->
+                  <camera name="wrist" pos="0 -0.030 0.010"
+                          xyaxes="1.000000 0.000000 -0.000000 0.000000 -0.857493 0.514496"
+                          fovy="75"/>
+
+                  <!-- Fixed jaw. -->
+                  <geom name="finger_static" class="finger"
+                        size="0.004 0.010 0.026" pos="-0.016 0 0.050"/>
+
+                  <!-- Moving jaw. Closes as the joint value increases, so
+                       gripper_range in the spec reads open -> closed. -->
+                  <body name="finger_moving_link" pos="0.016 0 0.024">
+                    <joint name="gripper" type="slide" axis="-1 0 0"
+                           range="0 0.024" damping="8" armature="0.005"/>
+                    <geom name="finger_moving" class="finger"
+                          size="0.004 0.010 0.026" pos="0 0 0.026"/>
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <contact>
+    <exclude body1="base" body2="shoulder_pan_link"/>
+  </contact>
+
+  <actuator>
+    <position class="so101" name="shoulder_pan"  joint="shoulder_pan"  ctrlrange="-1.92 1.92"/>
+    <position class="so101" name="shoulder_lift" joint="shoulder_lift" ctrlrange="-1.75 1.75"/>
+    <position class="so101" name="elbow_flex"    joint="elbow_flex"    ctrlrange="-1.69 1.69"/>
+    <position class="so101" name="wrist_flex"    joint="wrist_flex"    ctrlrange="-1.66 1.66"/>
+    <position class="so101" name="wrist_roll"    joint="wrist_roll"    ctrlrange="-2.79 2.79"/>
+    <position name="gripper" joint="gripper" ctrlrange="0 0.024" kp="120" dampratio="1"
+              forcerange="-25 25"/>
+  </actuator>
+</mujoco>

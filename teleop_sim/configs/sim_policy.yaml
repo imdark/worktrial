@@ -1,0 +1,30 @@
+# Stage 1: the MuJoCo arm driven autonomously, through the same loop the fake
+# configs use. Only robot.type and the asset path differ from fake_policy.yaml.
+
+robot:
+  type: mujoco
+  spec: ../robots/specs/so101.yaml
+  image_size: [128, 96]
+
+source:
+  type: policy
+  policy: {type: constant}
+
+success:
+  type: never
+
+reset:
+  type: none
+
+safety:
+  type: sim_watchdog
+  max_steps: 90
+
+task:
+  name: stage1_smoke
+
+record:
+  fps: 30
+  root: data/stage1_smoke
+
+seed: 0

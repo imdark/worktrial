@@ -1,0 +1,32 @@
+# YAM follower at a table with two water glasses, wrist camera on top of the
+# gripper and an overhead `top` camera. Driven through the same loop as every
+# other config; only robot.spec differs from sim_policy.yaml.
+
+robot:
+  type: mujoco
+  spec: ../robots/specs/yam.yaml
+  image_size: [224, 224]   # what the public YAM datasets (ABC-130k) store
+
+source:
+  type: policy
+  policy: {type: constant}
+
+success:
+  type: never
+
+reset:
+  type: none
+
+safety:
+  type: sim_watchdog
+  max_steps: 90
+  enforce_workspace: true
+
+task:
+  name: yam_glasses_smoke
+
+record:
+  fps: 30
+  root: data/yam_glasses_smoke
+
+seed: 0
