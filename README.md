@@ -5,23 +5,25 @@ demonstrations → imitation learning → **autonomous manipulation** → sim2re
 transfer.
 
 The simulated robot today is an **I2RT YAM** arm at a table with two water
-glasses, a camera on top of its gripper and an overhead camera. The same code
+glasses, a camera on top of its gripper and an overhead camera. It runs with
+either the arm's stock gripper or **Kronos**, the production end effector,
+modelled from its CAD for sim2real. The same code
 drives a placeholder SO-101 arm, which is the point: a robot is a YAML spec
 plus a driver, not a rewrite.
 
 > Architecture and the full 14-stage plan: [DESIGN.md](DESIGN.md).
-> Why YAM, and what public data exists for it: [YAM_RESEARCH.md](YAM_RESEARCH.md).
+> Why YAM, and what public data exists for it: [research/yam_research.md](research/yam_research.md).
 
 ## Status
 
 | Stage | | |
 |---|---|---|
 | 0 — skeleton and contracts | ✅ | the seams, the control loop, startup compatibility check, conformance suite |
-| 1 — simulated robot and scene | ✅ | MuJoCo YAM + glasses scene; composable arm / end effector / scene descriptions |
+| 1 — simulated robot and scene | ✅ | MuJoCo YAM + glasses scene; composable arm / end effector / scene descriptions; Kronos production gripper |
 | 2 — teleop loop, async inference | next | keyboard teleop, `AsyncPolicySource`, per-step staleness |
 
 ```
-pytest          237 passed, 8 skipped
+pytest          279 passed, 11 skipped   (239 passed, 51 skipped without the Kronos assets)
 ruff check .    clean
 ```
 
@@ -138,7 +140,19 @@ robot.send_action(Action(mode=spec.default_control_mode, values=spec.home_joints
                          gripper=1.0, timestamp=0.0))
 ```
 
-### 5. Through the control loop, from a config
+### 5. Record a run: multi-view video + stills
+
+```bash
+python scripts/record_demo.py                       # YAM + Kronos (needs the Kronos assets)
+python scripts/record_demo.py --spec teleop_sim/robots/specs/yam.yaml --grasp stock
+```
+
+Runs the scripted pick of `glass_right` and writes, to `outputs/<robot>_glass_pick/`
+(gitignored), an MP4 with six views per frame (3/4, side, gripper close-up,
+top-down, and the `top` and `wrist` cameras a policy sees), a still at the end of each
+phase, and a contact sheet of the stills.
+
+### 6. Through the control loop, from a config
 
 ```python
 from teleop_sim.core.config import RunConfig, build_system
@@ -159,7 +173,7 @@ change.
 | | |
 |---|---|
 | **Arm** | I2RT YAM, 6 DoF, from MuJoCo Menagerie (MIT). Home pose `[0, 1.047, 1.047, 0, 0, 0]` rad. |
-| **Gripper** | `yam_linear`, the stock gripper Menagerie ships: parallel two-finger jaw, ~76 mm opening, one actuator for both fingers. **Not the production end effector yet.** |
+| **Gripper** | `yam_linear` (`yam.yaml`): the stock gripper Menagerie ships, a parallel two-finger jaw with ~76 mm opening. Or `kronos` (`yam_kronos.yaml`): the production end effector, [below](#the-production-end-effector-kronos). |
 | **`wrist` camera** | D405-sized (42×42×23 mm) on **top of the gripper**, looking past the fingertips. 58° vertical FOV. |
 | **`top` camera** | Overhead workspace view, named to match the public YAM datasets. 55° vertical FOV. |
 | **Glasses** | `glass_left` and `glass_right`: 65 mm across, 100 mm tall, 199 g, 45 mm apart, 0.40 m in front of the arm. |
@@ -168,7 +182,7 @@ change.
 A scripted side grasp lifts `glass_right` 100 mm. That's a test
 (`tests/test_yam_scene.py`), so the scene is checked to be usable for the
 task, not just to render. How that trajectory is generated is in
-[`tests/yam_grasp.py`](tests/yam_grasp.py).
+[`teleop_sim/envs/scripted_grasp.py`](teleop_sim/envs/scripted_grasp.py).
 
 ### Changing the scene
 
@@ -187,6 +201,46 @@ task, not just to render. How that trajectory is generated is in
 
 ---
 
+## The production end effector: Kronos
+
+[`robots/specs/yam_kronos.yaml`](teleop_sim/robots/specs/yam_kronos.yaml) is the
+YAM with Kronos in place of the stock gripper: two Dynamixel XL430-W250-T servos
+driving two pivoting fingers through 1:1 meshed gear hubs, with TPU pads and grip
+tape, and a camera on a neck above the fingers.
+
+**Its model files are not in this repository.** They are generated from the
+proprietary CAD (the Hardware Archive), which stays private, and this repository
+is public. To build them locally, see
+[`assets/end_effectors/kronos/README.md`](assets/end_effectors/kronos/README.md).
+Until you do, `yam_kronos` won't load and every Kronos test skips.
+
+```
+Hardware Archive.zip ─ scripts/build_kronos_assets.py (gmsh) ─▶ meshes/*.stl + kronos_extract.json
+kronos_extract.json ── scripts/build_kronos_model.py ────────▶ kronos.xml
+```
+
+The first step needs the CAD and gmsh (GPL, build-time only). The second is plain
+Python ([`teleop_sim/envs/kronos_assets.py`](teleop_sim/envs/kronos_assets.py)),
+so the model can be regenerated and reviewed without either.
+
+| | Value | Source |
+|---|---|---|
+| Geometry, pivots (31.0 mm apart), CoM, inertia | from the STEP assembly | CAD, measured |
+| Mass | housing 258.7 g, each finger 38.0 g | slicer projects + servo datasheet |
+| Finger motion | exact mirror (gear coupling); 28.0° from open to closed, video shows 25.5 ± 3.5° | video + STL + CAD |
+| "Open" (gripper 0.0) | the widest pose in the teleop video, 18.85° in from the CAD pose | video + STL |
+| "Closed" (gripper 1.0) | where the pads meet, 46.8°, measured from the pad geometry | computed |
+| Grip torque limit | 2.8 N·m (2 × XL430 stall at 11.1 V) | datasheet, **voltage assumed** |
+| Pad friction 1.2, shell 0.6 | TPU + grip tape vs PETG-CF | **assumed** |
+| Wrist camera | RealSense D405 size, 58° FOV | **model assumed** |
+| Mount on the YAM flange | orientation read off the video | **inferred, needs confirming** |
+
+`tests/test_kronos.py` pins each measured value, so the model can't drift from
+the hardware evidence without a failing test. The same scripted side grasp (with
+Kronos-specific offsets, `KRONOS_GRASP`) lifts `glass_right` about 100 mm.
+
+---
+
 ## Robot descriptions: arm + end effector + scene
 
 Each physical thing has its own description, and a robot is a combination of
@@ -195,9 +249,9 @@ them:
 | Part | Description | Model | Holds |
 |---|---|---|---|
 | **Arm** | [`robots/arms/yam.yaml`](teleop_sim/robots/arms/yam.yaml) | `assets/i2rt_yam/yam_arm.xml` | joints, limits, home, control rate, the `flange` body an end effector bolts to |
-| **End effector** | [`robots/end_effectors/yam_linear.yaml`](teleop_sim/robots/end_effectors/yam_linear.yaml) | `assets/end_effectors/yam_linear/` | gripper calibration, grasp point, mount pose on the flange, the cameras it carries |
+| **End effector** | [`yam_linear.yaml`](teleop_sim/robots/end_effectors/yam_linear.yaml), [`kronos.yaml`](teleop_sim/robots/end_effectors/kronos.yaml) | `assets/end_effectors/<name>/` | gripper calibration, grasp point, mount pose on the flange, the cameras it carries |
 | **Scene** | [`scenes/glasses_table.yaml`](teleop_sim/scenes/glasses_table.yaml) | `assets/scenes/glasses_table/` | table, objects, fixed cameras, workspace, physics options |
-| **Robot** | [`robots/specs/yam.yaml`](teleop_sim/robots/specs/yam.yaml) | — | which arm + which end effector |
+| **Robot** | [`yam.yaml`](teleop_sim/robots/specs/yam.yaml), [`yam_kronos.yaml`](teleop_sim/robots/specs/yam_kronos.yaml) | — | which arm + which end effector |
 
 ```yaml
 # robots/specs/yam.yaml: the whole robot description
@@ -277,18 +331,19 @@ is concrete.
 | `teleop_sim/robots/sim/` | `MujocoRobot` |
 | `teleop_sim/core/parts.py` | arm / end effector / scene descriptions and how they compose |
 | `teleop_sim/robots/arms/`, `end_effectors/` | part descriptions |
-| `teleop_sim/robots/specs/` | robots: `yam.yaml` (a composition), `so101.yaml` (monolithic) |
+| `teleop_sim/robots/specs/` | robots: `yam.yaml`, `yam_kronos.yaml` (compositions), `so101.yaml` (monolithic) |
 | `teleop_sim/robots/sim/assembly.py` | builds one MuJoCo model from the parts |
 | `teleop_sim/scenes/` | scene descriptions |
-| `teleop_sim/envs/` | scene handles, task composition, the YAM asset generator |
+| `teleop_sim/envs/` | scene handles, task composition, asset generators (YAM, Kronos), the scripted grasp |
 | `teleop_sim/configs/` | run configs: `yam_glasses`, `sim_policy` (SO-101), fake configs |
 | `assets/i2rt_yam/` | vendored YAM (`upstream/`, untouched) and the generated arm |
-| `assets/end_effectors/` | end-effector models (`yam_linear/`, generated from upstream) |
+| `assets/end_effectors/` | end-effector models: `yam_linear/` (generated from upstream), `kronos/` (generated locally, not tracked) |
 | `assets/scenes/` | scene models (`glasses_table/`) |
 | `assets/so101/` | placeholder SO-101 model and scene |
-| `scripts/` | `view.py`, `snapshot.py`, `export_model.py`, `build_yam_assets.py` |
+| `scripts/` | viewing: `view.py`, `snapshot.py`, `record_demo.py`, `export_model.py`; asset builds: `build_yam_assets.py`, `build_kronos_assets.py`, `build_kronos_model.py` |
 | `tests/conformance/` | the shared contract every `Robot` implementation must pass |
 | `tests/fakes.py` | every seam with no physics, hardware or rendering |
+| `research/` | background: the YAM survey, the hierarchical-VLA thesis |
 
 ## Tests
 
@@ -297,6 +352,7 @@ pytest                                # everything
 pytest tests/test_yam_scene.py        # the glasses environment, including the grasp
 pytest tests/conformance/             # the Robot contract: fake, SO-101, YAM + each gripper
 pytest tests/test_composition.py      # arm / end effector / scene composition
+pytest tests/test_kronos.py           # Kronos against its hardware evidence (skips without its assets)
 ```
 
 Two conventions that matter when adding code:
@@ -311,9 +367,14 @@ Two conventions that matter when adding code:
 
 ## Known limitations
 
-- **The grasp works but isn't robust yet.** The simulated gripper squeezes only
-  ~1.5 N per side, and some grasp variants tip the glass. The robust scripted
-  expert is Stage 4.
+- **The grasp works but isn't robust yet.** The stock gripper squeezes only
+  ~1.5 N per side. With Kronos, 12 of 16 swept grasp variants lift the glass but
+  only 3 keep it within 10° of upright. The robust scripted expert is Stage 4.
+- **The arm's position servos sag under load** (~0.05 rad at joints 2–3 holding a
+  glass). To hold a pose, command the planned pose, not the measured one;
+  commanding where the arm sagged to makes it sag again.
+- **Kronos's mount orientation, camera model and servo voltage are assumptions**
+  (see [the table](#the-production-end-effector-kronos)) until checked on the hardware.
 - **A hard strike on the table can jam YAM's fingers** until the next reset.
   This comes from the upstream model.
 - **The glasses are empty.** MuJoCo doesn't simulate liquid.

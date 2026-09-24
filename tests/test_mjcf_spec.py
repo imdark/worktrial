@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 
 from teleop_sim.core.spec import RobotSpec
-from tests.conftest import SPEC_PATH
+from tests.conftest import SPEC_PATH, requires_kronos
 
 mujoco = pytest.importorskip("mujoco", reason="needs the 'sim' extra")
 
@@ -35,10 +35,18 @@ SIM_ROBOTS = {
     "yam@glasses_table": (SPEC_PATH.parent / "yam.yaml", GLASSES),
     "yam_bare": (SPEC_PATH.parent / "yam.yaml", None),
     "yam_test_jaw": (TEST_JAW, None),
+    "yam_kronos@glasses_table": (SPEC_PATH.parent / "yam_kronos.yaml", GLASSES),
+    "yam_kronos_bare": (SPEC_PATH.parent / "yam_kronos.yaml", None),
 }
 
 
-@pytest.fixture(scope="module", params=list(SIM_ROBOTS), ids=str)
+@pytest.fixture(
+    scope="module",
+    params=[
+        pytest.param(name, id=name, marks=[requires_kronos] if "kronos" in name else [])
+        for name in SIM_ROBOTS
+    ],
+)
 def sim_spec(request):
     robot, scene = SIM_ROBOTS[request.param]
     spec = RobotSpec.from_yaml(robot)

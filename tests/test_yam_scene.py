@@ -16,8 +16,8 @@ from tests.conftest import PACKAGE_ROOT
 
 mujoco = pytest.importorskip("mujoco", reason="needs the 'sim' extra")
 
+from teleop_sim.envs.scripted_grasp import GraspScript  # noqa: E402
 from teleop_sim.robots.sim.mujoco_robot import MujocoRobot  # noqa: E402
-from tests.yam_grasp import GraspScript  # noqa: E402
 
 YAM_SPEC = PACKAGE_ROOT / "robots" / "specs" / "yam.yaml"
 GLASSES_TABLE = PACKAGE_ROOT / "scenes" / "glasses_table.yaml"

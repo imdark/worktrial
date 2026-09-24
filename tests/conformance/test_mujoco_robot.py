@@ -13,7 +13,7 @@ from teleop_sim.core.protocols import Robot
 from teleop_sim.core.spec import RobotSpec, SensingSpec
 from teleop_sim.robots.sim.mujoco_robot import ModelMismatch, MujocoRobot
 from tests.conformance.robot import RobotConformance
-from tests.conftest import SPEC_PATH
+from tests.conftest import SPEC_PATH, requires_kronos
 
 pytest.importorskip("mujoco", reason="needs the 'sim' extra")
 
@@ -72,6 +72,14 @@ class TestYamTestJawConformance(TestYamConformance):
         return RobotSpec.from_yaml(
             SPEC_PATH.parent.parent.parent.parent / "tests" / "assets" / "yam_test_jaw.yaml"
         )
+
+
+@requires_kronos
+class TestYamKronosConformance(TestYamConformance):
+    """The production gripper: two servos on geared hubs, pivoting fingers."""
+
+    def base_spec(self) -> RobotSpec:
+        return RobotSpec.from_yaml(SPEC_PATH.parent / "yam_kronos.yaml")
 
 
 def test_declared_joint_torque_is_populated():

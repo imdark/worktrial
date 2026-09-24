@@ -1,0 +1,4 @@
+# YAM with the Kronos production gripper. One line different from yam.yaml.
+name: yam_kronos
+arm: ../arms/yam.yaml
+end_effector: ../end_effectors/kronos.yaml

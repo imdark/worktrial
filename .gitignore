@@ -11,3 +11,19 @@ calib/
 .DS_Store
 build/
 MUJOCO_LOG.TXT
+
+# Hardware source files: large, proprietary, and the video shows people.
+# Version them in Git LFS or a separate store, not in this repo.
+assets/Hardware Archive.zip
+assets/Big Master STL.stl
+assets/end_efector_vide.mov
+assets/end_effector_pics/
+assets/**/*.step
+assets/**/*.stp
+assets/**/*.3mf
+
+# The Kronos model is derived from that CAD (meshes, masses, pivots, inertias),
+# so it stays out of this public repository too. Regenerate it locally -- see
+# assets/end_effectors/kronos/README.md.
+assets/end_effectors/kronos/*
+!assets/end_effectors/kronos/README.md

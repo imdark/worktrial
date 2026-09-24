@@ -11,10 +11,13 @@ end effectors to be swappable, that file is split -- never edited -- into:
   D405-style camera on top, as one attachable body with its assets and default
   classes namespaced ``yam_linear_`` so they cannot collide with the arm's.
 
-One misassignment is unavoidable: Menagerie fuses the wrist motor and the stock
-gripper's mounting plate into a single mesh, so that plate stays drawn on the
-arm. tests/test_composition.py proves arm + yam_linear reproduces upstream --
-same joints, actuators and masses, identical grasp-point kinematics.
+Menagerie also fuses the wrist-roll motor and the stock gripper's housing frame
+into one mesh (model2__13). In link_6's frame the motor spans z -10.6..4 mm and
+the housing reaches up to 60.5 mm; no triangle straddles the motor's top face, so it separates
+them: the motor stays on the arm, the housing goes to the stock gripper.
+Without the cut, any other end effector renders with the stock frame through it.
+tests/test_composition.py proves arm + yam_linear reproduces upstream -- same
+joints, actuators and masses, identical grasp-point kinematics.
 
 ``glasses.xml`` -- two water glasses -- is generated too: MuJoCo has no hollow
 primitive, so each glass is a ring of wall boxes on a disc.
@@ -26,6 +29,7 @@ from __future__ import annotations
 
 import copy
 import math
+import struct
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
@@ -117,8 +121,12 @@ class WristCamera:
         )
 
 
-ARM_MESHDIR = "upstream/assets"                       # relative to assets/i2rt_yam/
-EE_MESHDIR = "../../i2rt_yam/upstream/assets"         # relative to assets/end_effectors/yam_linear/
+# Mesh paths, relative to the file that references them: the arm's are relative
+# to assets/i2rt_yam/, the stock gripper's to assets/end_effectors/yam_linear/.
+ARM_UPSTREAM = "upstream/assets"
+EE_UPSTREAM = "../../i2rt_yam/upstream/assets"
+WRIST_MOTOR_MESH = "meshes/yam_wrist_motor.stl"
+STOCK_FRAME_MESH = "meshes/stock_frame.stl"
 EE_NAME = "yam_linear"
 EE_PREFIX = f"{EE_NAME}_"
 #: Physics the arm was validated with. 1/600 s makes a 30 Hz control period
@@ -126,7 +134,15 @@ EE_PREFIX = f"{EE_NAME}_"
 ARM_TIMESTEP = "0.0016666666666666668"
 
 _FINGER_BODIES = ("link_left_finger", "link_right_finger")
-_RAIL_POSITIONS = ("0 0.039 0.052", "0 -0.039 0.052")
+#: The stock gripper's collision geoms on link_6: two finger rails and the
+#: disc under its housing frame.
+_GRIPPER_COLLISION_POSITIONS = ("0 0.039 0.052", "0 -0.039 0.052", "0 0.0 0.03")
+_FUSED_MESH = "model2__13"
+#: link_6-frame z the wrist motor ends at. A triangle lying wholly below it is
+#: motor; anything reaching above is the stock gripper's housing, whose flat
+#: side walls run from the motor face (4 mm) to the frame (44 mm) without a
+#: single vertex in between.
+_MOTOR_TOP_Z = 0.006
 
 
 def _is_gripper_part(el: ET.Element) -> bool:
@@ -134,7 +150,7 @@ def _is_gripper_part(el: ET.Element) -> bool:
     if el.tag == "body":
         return el.get("name") in _FINGER_BODIES
     if el.tag == "geom":
-        return el.get("mesh") == "model2__12" or el.get("pos") in _RAIL_POSITIONS
+        return el.get("mesh") == "model2__12" or el.get("pos") in _GRIPPER_COLLISION_POSITIONS
     if el.tag == "site":
         return el.get("name") == "grasp_site"
     return False
@@ -151,20 +167,81 @@ def _parse_upstream(upstream_xml: str) -> tuple[ET.Element, ET.Element]:
     if link6 is None:
         raise ValueError("upstream yam.xml no longer has a link_6 body")
     found = [c for c in link6 if _is_gripper_part(c)]
-    if len(found) != 6:
+    fused = [g for g in link6.findall("geom") if g.get("mesh") == _FUSED_MESH]
+    if len(found) != 7 or len(fused) != 1:
         raise ValueError(
             "upstream yam.xml no longer matches the expected link_6 layout: found "
-            f"{len(found)} of the 6 stock-gripper elements (2 fingers, linkage mesh, "
-            "2 rails, grasp_site). Refusing to split an unrecognised model."
+            f"{len(found)} of the 7 stock-gripper elements (2 fingers, linkage mesh, "
+            "2 rails, housing disc, grasp_site) and {len(fused)} of 1 fused "
+            "motor+frame mesh. Refusing to split an unrecognised model."
         )
     return root, link6
+
+
+def _quat_matrix(wxyz: str) -> np.ndarray:
+    w, x, y, z = (float(v) for v in wxyz.split())
+    n = math.sqrt(w * w + x * x + y * y + z * z)
+    w, x, y, z = w / n, x / n, y / n, z / n
+    return np.array([
+        [1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
+        [2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)],
+        [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)],
+    ])
+
+
+_STL_RECORD = np.dtype([("n", "<f4", 3), ("v", "<f4", (3, 3)), ("a", "<u2")])
+
+
+def read_stl(data: bytes) -> np.ndarray:
+    """Binary STL -> (n, 3, 3) triangle vertices."""
+    count = struct.unpack("<I", data[80:84])[0]
+    if len(data) != 84 + 50 * count:
+        raise ValueError("expected a binary STL")
+    rec = np.frombuffer(data[84:], dtype=_STL_RECORD)
+    return rec["v"].astype(np.float64)
+
+
+def write_stl(triangles: np.ndarray, header: bytes = b"teleop_sim generated") -> bytes:
+    rec = np.zeros(len(triangles), dtype=_STL_RECORD)
+    rec["v"] = triangles
+    e1, e2 = triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0]
+    normals = np.cross(e1, e2)
+    norm = np.linalg.norm(normals, axis=1, keepdims=True)
+    rec["n"] = np.divide(normals, norm, out=np.zeros_like(normals), where=norm > 0)
+    return header[:80].ljust(80, b"\0") + struct.pack("<I", len(triangles)) + rec.tobytes()
+
+
+def split_fused_mesh(upstream_xml: str, stl: bytes) -> tuple[bytes, bytes]:
+    """Cut model2__13 into (wrist motor, stock gripper frame).
+
+    A triangle is motor only if it lies wholly below the motor's top face in
+    link_6's frame, using the geom's own pose from the upstream XML. Both halves keep the
+    original mesh coordinates, so each is used with that same geom pose.
+    """
+    _, link6 = _parse_upstream(upstream_xml)
+    geom = next(g for g in link6.findall("geom") if g.get("mesh") == _FUSED_MESH)
+    rot = _quat_matrix(geom.get("quat", "1 0 0 0"))
+    pos = np.array([float(v) for v in geom.get("pos", "0 0 0").split()])
+    tris = read_stl(stl)
+    top = (tris @ rot.T + pos)[:, :, 2].max(axis=1)
+    motor, frame = tris[top < _MOTOR_TOP_Z], tris[top >= _MOTOR_TOP_Z]
+    if not len(motor) or not len(frame):
+        raise ValueError("the cut through the fused wrist mesh left one side empty")
+    return (
+        write_stl(motor, b"YAM wrist-roll motor, split from Menagerie model2__13"),
+        write_stl(frame, b"YAM stock gripper frame, split from Menagerie model2__13"),
+    )
 
 
 def build_arm(upstream_xml: str) -> str:
     """Upstream minus the stock gripper: the arm, ending at link_6."""
     root, _ = _parse_upstream(upstream_xml)
     root.set("model", "yam_arm")
-    root.find("compiler").set("meshdir", ARM_MESHDIR)
+    compiler = root.find("compiler")
+    compiler.attrib.pop("meshdir", None)
+    for mesh in root.find("asset").findall("mesh"):
+        mesh.set("name", mesh.get("name") or Path(mesh.get("file")).stem)
+        mesh.set("file", f"{ARM_UPSTREAM}/{mesh.get('file')}")
 
     option = root.find("option")
     if option is None:
@@ -185,9 +262,18 @@ def build_arm(upstream_xml: str) -> str:
     for light in worldbody.findall("light"):     # lighting is the scene's job
         worldbody.remove(light)
 
-    used = {g.get("mesh") for g in root.iter("geom") if g.get("mesh")}
+    # The fused wrist mesh becomes the motor half; the frame half goes to the gripper.
+    for geom in link6.findall("geom"):
+        if geom.get("mesh") == _FUSED_MESH:
+            geom.set("mesh", "yam_wrist_motor")
     assets = root.find("asset")
-    for mesh in [m for m in assets.findall("mesh") if Path(m.get("file")).stem not in used]:
+    for mesh in assets.findall("mesh"):
+        if mesh.get("name") == _FUSED_MESH:
+            mesh.set("name", "yam_wrist_motor")
+            mesh.set("file", WRIST_MOTOR_MESH)
+
+    used = {g.get("mesh") for g in root.iter("geom") if g.get("mesh")}
+    for mesh in [m for m in assets.findall("mesh") if m.get("name") not in used]:
         assets.remove(mesh)
     return _to_text(root)
 
@@ -198,17 +284,25 @@ def build_linear_gripper(upstream_xml: str, camera: WristCamera | None = None) -
     upstream, link6 = _parse_upstream(upstream_xml)
 
     ee = ET.Element("mujoco", model=EE_NAME)
-    ET.SubElement(ee, "compiler", angle="radian", meshdir=EE_MESHDIR)
+    ET.SubElement(ee, "compiler", angle="radian")
     ee.append(copy.deepcopy(upstream.find("default")))
 
     parts = [copy.deepcopy(c) for c in link6 if _is_gripper_part(c)]
+    fused = next(g for g in link6.findall("geom") if g.get("mesh") == _FUSED_MESH)
+    frame = copy.deepcopy(fused)
+    frame.set("mesh", "stock_frame")
+    parts.insert(0, frame)
     used_meshes = {g.get("mesh") for p in parts for g in p.iter("geom") if g.get("mesh")}
     assets = ET.SubElement(ee, "asset")
     for asset in upstream.find("asset"):
-        if asset.tag == "material" or (
-            asset.tag == "mesh" and Path(asset.get("file")).stem in used_meshes
-        ):
+        if asset.tag == "material":
             assets.append(copy.deepcopy(asset))
+        elif asset.tag == "mesh" and Path(asset.get("file")).stem in used_meshes:
+            mesh = copy.deepcopy(asset)
+            mesh.set("name", Path(asset.get("file")).stem)
+            mesh.set("file", f"{EE_UPSTREAM}/{asset.get('file')}")
+            assets.append(mesh)
+    ET.SubElement(assets, "mesh", name="stock_frame", file=STOCK_FRAME_MESH)
 
     worldbody = ET.SubElement(ee, "worldbody")
     body = ET.SubElement(worldbody, "body", name=EE_NAME, childclass="yam")
@@ -243,7 +337,7 @@ def _namespace(root: ET.Element, prefix: str) -> None:
         elif el.get("material"):
             el.set("material", prefix + el.get("material"))
         if el.tag == "mesh":
-            el.set("name", prefix + (el.get("name") or Path(el.get("file")).stem))
+            el.set("name", prefix + el.get("name"))
         elif el.get("mesh"):
             el.set("mesh", prefix + el.get("mesh"))
 

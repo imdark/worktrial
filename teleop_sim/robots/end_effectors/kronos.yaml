@@ -1,0 +1,44 @@
+# Kronos: the production two-finger gripper (photos, video, "Big Master" CAD).
+#
+# Model: assets/end_effectors/kronos/kronos.xml, generated from the Kronos CAD
+# assembly by scripts/build_kronos_assets.py (needs the hardware archive) and
+# scripts/build_kronos_model.py. What was measured and what is assumed is listed
+# at the top of teleop_sim/envs/kronos_assets.py.
+#
+# Mechanism: two Dynamixel XL430-W250-T servos, one per finger, on 1:1 meshed
+# gear hubs -- the fingers pivot in exact mirror. Driven here as one position
+# actuator with both servos' stall torque; on hardware both servos must always
+# receive the same command, or they fight through the gears.
+
+name: kronos
+version: "1"
+mjcf_path: ../../../assets/end_effectors/kronos/kronos.xml
+root_body: kronos
+
+# Root frame: z along the fingers, y up the camera neck, x the closing direction,
+# which is YAM link_6's own convention. Origin at the back of the housing, placed
+# on the wrist-roll motor's face (z = 0 in link_6, where the motor mesh ends).
+# INFERRED FROM THE VIDEO: fingers straight out along the roll axis, camera on
+# top. No bolt pattern facing the arm could be identified in the CAD. Confirm.
+mount: [0, 0, 0, 1, 0, 0, 0]
+ee_site: kronos_grasp
+
+# Finger angle, radians, from the CAD assembly's pose (splayed ~39 deg).
+#   open   = 0.328995: the widest opening in the teleop video (the STL pose)
+#   closed = 0.816500: the pads meet -- measured from the pad collision shapes,
+#            and the joint's hard stop
+gripper:
+  joint: kronos_finger_left
+  actuator: kronos_grip
+  open_pos: 0.328995
+  closed_pos: 0.816500
+  deadband: 0.02
+
+# The same camera name as every end effector: policies see "wrist" regardless
+# of which gripper is fitted. Model ASSUMED: RealSense D405.
+cameras:
+  - name: wrist
+    mount: kronos_camera
+    pose: [0.0, 0.0, -0.0115, 1.0, 0.0, 0.0, 0.0]
+    fovy_deg: 58.0
+    resolution: [640, 480]

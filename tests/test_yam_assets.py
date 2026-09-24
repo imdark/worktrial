@@ -47,9 +47,16 @@ def test_upstream_is_byte_for_byte_what_was_vendored():
 
 @pytest.mark.parametrize("path", list(_build_script().outputs()), ids=lambda p: p.name)
 def test_generated_files_are_current(path):
+    expected = _build_script().outputs()[path]
+    if isinstance(expected, bytes):
+        assert path.read_bytes() == expected, (
+            f"{path.name} differs from the generator's output -- run "
+            "`python scripts/build_yam_assets.py`"
+        )
+        return
     on_disk = path.read_text()
     assert on_disk.startswith(GENERATED_HEADER)
-    assert on_disk == _build_script().outputs()[path], (
+    assert on_disk == expected, (
         f"{path.name} differs from the generator's output -- "
         "run `python scripts/build_yam_assets.py`, and never edit it by hand"
     )

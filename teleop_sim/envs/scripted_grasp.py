@@ -1,13 +1,15 @@
-"""A scripted side grasp for the YAM glasses scene, used by the scene tests.
+"""A scripted side grasp for the YAM glasses scene.
 
-Not a policy and not the Stage 4 scripted expert -- just enough IK to prove
-the environment admits the task: the glasses are reachable, fit between the
+Used by the scene tests and by scripts/record_demo.py. Not a policy and not the
+Stage 4 scripted expert -- just enough IK to show the environment admits the
+task with a given end effector: the glasses are reachable, fit between the
 fingers, and can be lifted. Everything is driven through the Robot interface,
 never by writing qpos, so it also exercises the driver.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
@@ -32,13 +34,20 @@ class SideGrasp:
 
 DEFAULT_GRASP = SideGrasp()
 
+#: Kronos grasps near its fingertips (the pads form a V), so it wants to sit
+#: further past the glass centre and higher. Found by sweep: 3 of 16
+#: configurations held upright; this one tilts the glass 4.8 deg.
+KRONOS_GRASP = SideGrasp(past_centre=0.02, height=0.09, pitch_deg=45.0)
+
 
 class GraspScript:
-    def __init__(self, robot: MujocoRobot) -> None:
+    def __init__(self, robot: MujocoRobot, on_step: Callable[[], None] | None = None) -> None:
         import mujoco
 
         self._mj = mujoco
         self.robot = robot
+        #: Called after every control step -- how the demo recorder grabs frames.
+        self.on_step = on_step
         self.spec = robot.spec
         self.model, self.data = robot.model, robot.data
         self.site = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, self.spec.ee_site)
@@ -100,6 +109,8 @@ class GraspScript:
                 Action(mode=self.spec.default_control_mode, values=q, gripper=gripper,
                        timestamp=0.0, obs_timestamp=0.0)
             )
+            if self.on_step is not None:
+                self.on_step()
         for k in range(1, steps + 1):
             send(q_from + (q_to - q_from) * (k / steps))
         for _ in range(settle):

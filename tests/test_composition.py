@@ -18,7 +18,7 @@ import pytest
 
 from teleop_sim.core.parts import ArmSpec, EndEffectorSpec, SceneSpec, compose
 from teleop_sim.core.spec import RobotSpec, SpecError
-from tests.conftest import PACKAGE_ROOT, REPO_ROOT
+from tests.conftest import PACKAGE_ROOT, REPO_ROOT, requires_kronos
 
 mujoco = pytest.importorskip("mujoco", reason="needs the 'sim' extra")
 
@@ -152,7 +152,14 @@ def test_swapping_the_end_effector_leaves_the_arm_kinematics_alone(two_robots):
         np.testing.assert_allclose(flange[0], flange[1], atol=1e-12)
 
 
-@pytest.mark.parametrize("robot", [YAM, TEST_JAW_ROBOT], ids=["yam_linear", "test_jaw"])
+@pytest.mark.parametrize(
+    "robot",
+    [
+        pytest.param(YAM, id="yam_linear"),
+        pytest.param(TEST_JAW_ROBOT, id="test_jaw"),
+        pytest.param(ROBOTS / "specs" / "yam_kronos.yaml", id="kronos", marks=requires_kronos),
+    ],
+)
 @pytest.mark.parametrize("gripper", [0.0, 1.0], ids=["open", "closed"])
 def test_end_effector_touches_nothing_on_the_arm(robot, gripper):
     """A mounting mistake -- fingers placed where they hit the wrist -- stops
@@ -198,8 +205,7 @@ def test_editing_an_end_effector_mesh_changes_the_hash(tmp_path):
     meshes = tmp_path / "meshes"
     shutil.copytree(UPSTREAM.parent / "assets", meshes)
     xml = ee_dir / "yam_linear.xml"
-    xml.write_text(xml.read_text().replace('meshdir="../../i2rt_yam/upstream/assets"',
-                                           f'meshdir="{meshes}"'))
+    xml.write_text(xml.read_text().replace("../../i2rt_yam/upstream/assets", str(meshes)))
     desc = tmp_path / "yam_linear.yaml"
     desc.write_text(LINEAR.read_text().replace(
         "../../../assets/end_effectors/yam_linear/yam_linear.xml", str(xml)))
