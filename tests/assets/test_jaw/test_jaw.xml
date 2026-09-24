@@ -1,0 +1,43 @@
+<!-- A deliberately simple parallel jaw, for tests only.
+
+     Exists to prove end effectors are swappable: attached to the same YAM arm
+     as the stock gripper, it must compose, pass the Robot conformance suite,
+     and leave the arm's kinematics untouched. Everything is namespaced
+     test_jaw_ so it cannot collide with the arm. -->
+<mujoco model="test_jaw">
+  <compiler angle="radian"/>
+  <worldbody>
+    <body name="test_jaw">
+      <inertial pos="0 0 0.06" mass="0.2" diaginertia="2e-4 2e-4 1e-4"/>
+      <!-- Palm and fingers sit forward of the wrist: placed any closer, the
+           fingers hit link_5 and the jaw never closes, which is what
+           test_composition's "touches nothing on the arm" check is for. -->
+      <geom name="test_jaw_palm" type="box" size="0.03 0.02 0.015" pos="0 0 0.06"
+            rgba="0.3 0.3 0.35 1"/>
+      <site name="test_jaw_tcp" pos="0 0 0.14" size="0.004"/>
+      <!-- Both ends of travel are hard stops (the pads never meet), so the
+           normalised reading saturates exactly without leaning on a deadband. -->
+      <body name="test_jaw_left" pos="0.005 0 0.11">
+        <joint name="test_jaw_left" type="slide" axis="1 0 0" range="0 0.03"
+               damping="5" armature="0.01"/>
+        <geom type="box" size="0.003 0.012 0.03" pos="0.003 0 0" rgba="0.8 0.4 0.1 1"
+              mass="0.05"/>
+      </body>
+      <body name="test_jaw_right" pos="-0.005 0 0.11">
+        <joint name="test_jaw_right" type="slide" axis="-1 0 0" range="0 0.03"
+               damping="5" armature="0.01"/>
+        <geom type="box" size="0.003 0.012 0.03" pos="-0.003 0 0" rgba="0.8 0.4 0.1 1"
+              mass="0.05"/>
+      </body>
+    </body>
+  </worldbody>
+  <equality>
+    <joint joint1="test_jaw_right" joint2="test_jaw_left" polycoef="0 1 0 0 0"/>
+  </equality>
+  <actuator>
+    <!-- ctrlrange overshoots the joint range at both ends: commanding an
+         extreme drives the jaw into its stop. -->
+    <position name="test_jaw_grip" joint="test_jaw_left" ctrlrange="-0.002 0.032" kp="80"
+              dampratio="1"/>
+  </actuator>
+</mujoco>

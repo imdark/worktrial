@@ -17,21 +17,37 @@ from tests.conftest import SPEC_PATH
 
 mujoco = pytest.importorskip("mujoco", reason="needs the 'sim' extra")
 
+
 LIMIT_TOL = 1e-6
 POSE_TOL = 1e-3  # 1 mm
 
 
-SIM_SPECS = [SPEC_PATH, SPEC_PATH.parent / "yam.yaml"]
+from teleop_sim.core.parts import SceneSpec  # noqa: E402
+from teleop_sim.robots.sim.assembly import build_model  # noqa: E402
+
+GLASSES = SPEC_PATH.parent.parent.parent / "scenes" / "glasses_table.yaml"
+TEST_JAW = SPEC_PATH.parent.parent.parent.parent / "tests" / "assets" / "yam_test_jaw.yaml"
+
+# (robot description, scene description or None). so101 is monolithic; the YAM
+# is composed, and checked both in its cell and bare.
+SIM_ROBOTS = {
+    "so101": (SPEC_PATH, None),
+    "yam@glasses_table": (SPEC_PATH.parent / "yam.yaml", GLASSES),
+    "yam_bare": (SPEC_PATH.parent / "yam.yaml", None),
+    "yam_test_jaw": (TEST_JAW, None),
+}
 
 
-@pytest.fixture(scope="module", params=SIM_SPECS, ids=lambda p: p.stem)
+@pytest.fixture(scope="module", params=list(SIM_ROBOTS), ids=str)
 def sim_spec(request):
-    return RobotSpec.from_yaml(request.param)
+    robot, scene = SIM_ROBOTS[request.param]
+    spec = RobotSpec.from_yaml(robot)
+    return spec.with_scene(SceneSpec.from_yaml(scene)) if scene else spec
 
 
 @pytest.fixture(scope="module")
 def model(sim_spec):
-    return mujoco.MjModel.from_xml_path(sim_spec.mjcf_path)
+    return build_model(sim_spec)
 
 
 def _jid(model, name):

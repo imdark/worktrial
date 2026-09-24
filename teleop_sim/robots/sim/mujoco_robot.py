@@ -16,12 +16,11 @@ import numpy as np
 from teleop_sim.core.clock import Clock
 from teleop_sim.core.protocols import Robot, UnsupportedControlMode
 from teleop_sim.core.registry import ROBOTS, register
-from teleop_sim.core.spec import RobotSpec, SpecError
+from teleop_sim.core.spec import RobotSpec
 from teleop_sim.core.types import Action, Observation
+from teleop_sim.robots.sim.assembly import ModelMismatch, build_model
 
-
-class ModelMismatch(SpecError):
-    """The MJCF and the RobotSpec disagree about what this robot is."""
+__all__ = ["ModelMismatch", "MujocoRobot"]
 
 
 @register(ROBOTS, "mujoco")
@@ -42,11 +41,8 @@ class MujocoRobot(Robot):
         self.spec = spec
         self.clock = clock
 
-        if not spec.mjcf_path:
-            raise ModelMismatch(
-                f"robot {spec.name!r}: mjcf_path is not set; MujocoRobot needs a model"
-            )
-        self.model = mujoco.MjModel.from_xml_path(spec.mjcf_path)
+        # Monolithic MJCF, or arm + end effector (+ scene) composed with MjSpec.
+        self.model = build_model(spec)
         self.data = mujoco.MjData(self.model)
 
         self._check_sensing()
@@ -94,7 +90,7 @@ class MujocoRobot(Robot):
         if ident < 0:
             raise ModelMismatch(
                 f"{label} {name!r} is declared in spec {self.spec.name!r} but is not "
-                f"in {self.spec.mjcf_path}"
+                "in its model"
             )
         return ident
 

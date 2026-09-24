@@ -1,0 +1,5 @@
+# The YAM arm with the test-only jaw instead of its stock gripper: the same
+# arm description, one line different from teleop_sim/robots/specs/yam.yaml.
+name: yam_test_jaw
+arm: ../../teleop_sim/robots/arms/yam.yaml
+end_effector: test_jaw/test_jaw.yaml

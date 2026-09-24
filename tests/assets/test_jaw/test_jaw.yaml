@@ -1,0 +1,13 @@
+# Test-only end effector: see test_jaw.xml.
+name: test_jaw
+version: "1"
+mjcf_path: test_jaw.xml
+root_body: test_jaw
+mount: [0, 0, 0, 1, 0, 0, 0]
+ee_site: test_jaw_tcp
+gripper:
+  joint: test_jaw_left
+  actuator: test_jaw_grip
+  open_pos: 0.03
+  closed_pos: 0.0
+  deadband: 0.01

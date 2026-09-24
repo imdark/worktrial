@@ -1,0 +1,65 @@
+<!-- The glasses table: tabletop, lighting, two water glasses, overhead camera.
+
+     A scene is the cell around a robot, not the robot. It contains no arm and
+     no gripper; teleop_sim/robots/sim/assembly.py attaches whichever
+     arm + end effector the robot description names, at the pose given by
+     teleop_sim/scenes/glasses_table.yaml. -->
+<mujoco model="glasses_table">
+  <compiler angle="radian"/>
+  <include file="glasses.xml"/>
+
+  <!-- Physics options come from the scene; the assembler refuses parts that
+       ask for something different.
+
+       timestep 1/600 s: exactly 20 substeps per 30 Hz control period (MuJoCo's
+       0.002 default is 16.67). tests/test_mjcf_spec.py guards it.
+
+       implicitfast: what the YAM model was built and validated with.
+
+       Elliptic cones, impratio 10: with the default pyramidal cone a held glass
+       creeps out of the grip under its own weight. Measured on scripted side
+       grasps: 0 of 6 lifted with the default, 3 of 8 with this. -->
+  <option timestep="0.0016666666666666668" integrator="implicitfast" cone="elliptic" impratio="10"/>
+
+  <visual>
+    <global offwidth="1280" offheight="960"/>
+    <quality shadowsize="4096"/>
+    <headlight ambient="0.40 0.40 0.40" diffuse="0.30 0.30 0.30" specular="0 0 0"/>
+  </visual>
+
+  <asset>
+    <texture name="skybox" type="skybox" builtin="gradient"
+             rgb1="0.36 0.43 0.52" rgb2="0.10 0.12 0.16" width="256" height="1536"/>
+    <texture name="tabletop_tex" type="2d" builtin="checker"
+             rgb1="0.66 0.60 0.52" rgb2="0.60 0.54 0.47" width="300" height="300"/>
+    <material name="tabletop" texture="tabletop_tex" texrepeat="8 8" reflectance="0"
+              specular="0.05" shininess="0.1"/>
+  </asset>
+
+  <worldbody>
+    <!-- Soft and mostly diffuse: specular hotspots on the table are pixels a
+         policy would learn to depend on. -->
+    <light name="key"  pos="0.6 0.4 1.4"  dir="-0.4 -0.3 -1" diffuse="0.45 0.45 0.45"
+           specular="0.05 0.05 0.05" castshadow="true"/>
+    <light name="fill" pos="-0.3 -0.5 0.9" dir="0.3 0.5 -0.9" diffuse="0.25 0.25 0.25"
+           specular="0 0 0" castshadow="false"/>
+    <!-- Stands in for the spotlight upstream's yam.xml carried: same height,
+         same default brightness (diffuse 0.7, specular 0.3, shadows on). That
+         one tracked link_6; a scene must not assume which robot it holds, so
+         this one is fixed, aimed at the workspace where the arm and glasses
+         are. Without it the arm renders ~13% darker than the model it was
+         split from. tests/test_yam_scene.py checks the brightness. -->
+    <light name="overhead" pos="0 0 1" dir="0.35 0 -0.94" diffuse="0.7 0.7 0.7"
+           specular="0.3 0.3 0.3" castshadow="true"/>
+
+    <!-- The arm is attached at the origin and welded to the world, so it sits
+         on the tabletop without colliding with it. -->
+    <geom name="tabletop" type="plane" size="0.8 0.8 0.02" material="tabletop"
+          friction="1.0 0.01 0.001"/>
+
+    <!-- Overhead workspace view, centred on the glasses with the gripper's
+         approach path in frame. Named to match the 'top' camera in the public
+         YAM datasets (ABC-130k). -->
+    <camera name="top" pos="0.22 0 0.72" xyaxes="0.000000 -1.000000 0.000000 0.965755 0.000000 0.259457" fovy="55"/>
+  </worldbody>
+</mujoco>

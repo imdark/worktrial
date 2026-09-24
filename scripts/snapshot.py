@@ -21,11 +21,13 @@ from pathlib import Path
 import numpy as np
 
 from teleop_sim.core.clock import WallClock
+from teleop_sim.core.parts import SceneSpec
 from teleop_sim.core.spec import RobotSpec
 from teleop_sim.core.types import Action
 from teleop_sim.robots.sim.mujoco_robot import MujocoRobot
 
 DEFAULT_SPEC = "teleop_sim/robots/specs/yam.yaml"
+DEFAULT_SCENE = "teleop_sim/scenes/glasses_table.yaml"
 
 
 def write_png(path: str | Path, rgb: np.ndarray) -> None:
@@ -51,6 +53,8 @@ def write_png(path: str | Path, rgb: np.ndarray) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--spec", default=DEFAULT_SPEC)
+    parser.add_argument("--scene", default=DEFAULT_SCENE,
+                        help="scene description, or 'none' for the bare robot")
     parser.add_argument("--out", default="snapshot.png")
     parser.add_argument("--steps", type=int, default=91)
     parser.add_argument("--columns", type=int, default=6)
@@ -60,6 +64,9 @@ def main() -> None:
     args = parser.parse_args()
 
     spec = RobotSpec.from_yaml(args.spec)
+    if spec.assembly is not None:
+        scene = None if args.scene == "none" else SceneSpec.from_yaml(args.scene)
+        spec = spec.with_scene(scene)
     robot = MujocoRobot(spec, WallClock(), image_size=(args.width, args.height))
     robot.connect()
     robot.reset(seed=0)

@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from teleop_sim.core.clock import WallClock
+from teleop_sim.core.parts import SceneSpec
 from teleop_sim.core.spec import RobotSpec
 from tests.conftest import PACKAGE_ROOT
 
@@ -19,12 +20,14 @@ from teleop_sim.robots.sim.mujoco_robot import MujocoRobot  # noqa: E402
 from tests.yam_grasp import GraspScript  # noqa: E402
 
 YAM_SPEC = PACKAGE_ROOT / "robots" / "specs" / "yam.yaml"
+GLASSES_TABLE = PACKAGE_ROOT / "scenes" / "glasses_table.yaml"
 GLASSES = ("glass_left", "glass_right")
 
 
 @pytest.fixture
 def robot():
-    robot = MujocoRobot(RobotSpec.from_yaml(YAM_SPEC), WallClock(), render_cameras=[])
+    spec = RobotSpec.from_yaml(YAM_SPEC).with_scene(SceneSpec.from_yaml(GLASSES_TABLE))
+    robot = MujocoRobot(spec, WallClock(), render_cameras=[])
     robot.reset(seed=0)
     return robot
 
@@ -86,7 +89,7 @@ def test_a_glass_fits_between_the_open_fingers(robot):
 def test_home_pose_puts_the_camera_on_top_and_the_fingers_level(robot):
     """The finger slide axis is link_6 x and the camera sits on its +y face.
     Measured, after inferring it from body positions got it backwards."""
-    r6 = robot.data.xmat[_body(robot, "link_6")].reshape(3, 3)
+    r6 = robot.data.xmat[_body(robot, "yam_linear")].reshape(3, 3)
     assert r6[:, 1] @ [0, 0, 1] > 0.99, "camera face should point up"
     assert abs(r6[:, 0] @ [0, 0, 1]) < 0.01, "fingers should close horizontally"
 
@@ -95,7 +98,7 @@ def test_wrist_camera_looks_along_the_fingers(robot):
     m, d = robot.model, robot.data
     cam = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_CAMERA, "wrist")
     view = -d.cam_xmat[cam].reshape(3, 3)[:, 2]
-    tool = d.xmat[_body(robot, "link_6")].reshape(3, 3)[:, 2]
+    tool = d.xmat[_body(robot, "yam_linear")].reshape(3, 3)[:, 2]
     assert view @ tool > 0.8
     assert d.cam_xpos[cam][2] > d.xpos[_body(robot, "link_6")][2], "camera above the wrist"
 
@@ -137,3 +140,22 @@ def test_a_scripted_side_grasp_lifts_a_glass(robot):
     assert script.body_tilt_deg("glass_right") < 10.0, "and still upright"
     moved = np.linalg.norm(script.body_pos("glass_left")[:2] - neighbour_before)
     assert moved < 0.005, f"neighbour moved {moved * 1000:.1f} mm"
+
+
+# ------------------------------------------------------------------ appearance
+
+#: Mean pixel brightness right after reset (home pose, gripper open), measured
+#: on the model as it was before the arm / end effector / scene split. A policy
+#: learns from these pixels, so a lost light is a real regression -- and the
+#: split did lose one (upstream's wrist-tracking spotlight: -13%) while every
+#: kinematic and dynamic test stayed green. The fixed replacement lands within
+#: +0.3% (top) and -2.9% (wrist, which the tracking light favoured).
+REFERENCE_BRIGHTNESS = {"top": 171.05, "wrist": 82.24}
+
+
+@pytest.mark.parametrize("camera", sorted(REFERENCE_BRIGHTNESS))
+def test_scene_lighting_matches_the_reference(camera):
+    spec = RobotSpec.from_yaml(YAM_SPEC).with_scene(SceneSpec.from_yaml(GLASSES_TABLE))
+    robot = MujocoRobot(spec, WallClock(), image_size=(320, 240), render_cameras=[camera])
+    image = robot.reset(seed=0).images[camera]
+    assert image.mean() == pytest.approx(REFERENCE_BRIGHTNESS[camera], rel=0.05)

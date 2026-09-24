@@ -143,6 +143,14 @@ def build_system(config: RunConfig, clock: Clock | None = None) -> System:
         raise ConfigError("robot config must name a 'spec' file")
     spec = RobotSpec.from_yaml(config.resolve(spec_path))
 
+    # The cell the robot is placed in. A property of the run, not of the robot:
+    # the same robot description drives the real arm with no scene at all.
+    scene_path = robot_cfg.pop("scene", None)
+    if scene_path is not None:
+        from teleop_sim.core.parts import SceneSpec
+
+        spec = spec.with_scene(SceneSpec.from_yaml(config.resolve(scene_path)))
+
     robot = build(ROBOTS, robot_cfg, spec=spec, clock=clock)
     source = build_source(config.source, spec=spec, clock=clock)
     success = build(SUCCESS, dict(config.success))

@@ -12,10 +12,15 @@ lives next to it so a future Menagerie release can be dropped in and diffed.
 
 | File | Origin | What |
 |---|---|---|
-| `upstream/` | vendored | arm MJCF, meshes, license, upstream README |
-| `yam_follower.xml` | **generated** | `upstream/yam.xml` + a D405-style wrist camera on top of the gripper |
-| `glasses.xml` | **generated** | two water glasses |
-| `glasses_scene.xml` | hand-written | table, lighting, overhead camera, timestep; includes the two above |
+| `upstream/` | vendored | arm + stock gripper MJCF, meshes, license, upstream README |
+| `yam_arm.xml` | **generated** | `upstream/yam.xml` with the stock gripper removed: the arm, ending at the `link_6` flange |
+| `../end_effectors/yam_linear/yam_linear.xml` | **generated** | the stock gripper as an attachable part (namespaced `yam_linear_`), plus a D405-style camera on top |
+| `../scenes/glasses_table/glasses.xml` | **generated** | two water glasses |
+
+Menagerie ships arm and gripper as one file; the generator splits it so
+end effectors can be swapped. `tests/test_composition.py` proves the split is
+lossless. The one inseparable piece: `link_6`'s mesh fuses the wrist motor with
+the stock gripper's mounting plate, so that plate stays drawn on the arm.
 
 Regenerate the generated files with `python scripts/build_yam_assets.py`.
 `tests/test_yam_assets.py` fails if they drift from what the generator produces.

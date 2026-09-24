@@ -50,8 +50,9 @@ class TestMujocoRobotConformance(RobotConformance):
 
 class TestYamConformance(RobotConformance):
     """A second, real arm through the identical contract -- the hardware-as-data
-    claim tested rather than asserted. Its gripper is a coupled two-finger
-    design with a deadband, where SO-101's is a single jaw with hard stops."""
+    claim tested rather than asserted. Composed (arm + stock gripper) and bare:
+    the view of the robot the real driver has. Its gripper is a coupled
+    two-finger design with a deadband, where SO-101's is a single jaw."""
 
     supports_sensing_variants = False
     settle_steps = 80
@@ -61,6 +62,16 @@ class TestYamConformance(RobotConformance):
 
     def make_robot(self, spec: RobotSpec) -> Robot:
         return _robot(spec)
+
+
+class TestYamTestJawConformance(TestYamConformance):
+    """Same arm, a different end effector: swapping the gripper is one line in
+    the robot description, and the contract still holds."""
+
+    def base_spec(self) -> RobotSpec:
+        return RobotSpec.from_yaml(
+            SPEC_PATH.parent.parent.parent.parent / "tests" / "assets" / "yam_test_jaw.yaml"
+        )
 
 
 def test_declared_joint_torque_is_populated():

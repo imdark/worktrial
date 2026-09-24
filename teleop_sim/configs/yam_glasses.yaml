@@ -1,10 +1,13 @@
-# YAM follower at a table with two water glasses, wrist camera on top of the
-# gripper and an overhead `top` camera. Driven through the same loop as every
-# other config; only robot.spec differs from sim_policy.yaml.
+# YAM (arm + stock gripper) placed in the glasses-table cell: wrist camera on
+# top of the gripper, overhead `top` camera from the scene. Driven through the
+# same loop as every other config.
+#
+# Swap the end effector in robots/specs/yam.yaml; swap the cell here.
 
 robot:
   type: mujoco
   spec: ../robots/specs/yam.yaml
+  scene: ../scenes/glasses_table.yaml
   image_size: [224, 224]   # what the public YAM datasets (ABC-130k) store
 
 source:

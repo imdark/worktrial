@@ -1,24 +1,34 @@
-"""Generate the MJCF we layer on top of the vendored YAM model.
+"""Generate the MJCF layered on top of the vendored YAM model.
 
-Two files are generated rather than hand-written:
+Menagerie ships YAM as one file with the stock gripper fused into the arm. For
+end effectors to be swappable, that file is split -- never edited -- into:
 
-* ``yam_follower.xml`` -- upstream ``yam.xml`` plus a D405-style camera mounted
-  on top of the gripper. MuJoCo cannot add a camera to a body defined in an
-  included file, so the alternative was forking upstream by hand; generating
-  keeps ``upstream/`` byte-for-byte pristine and makes a Menagerie update a
-  re-run instead of a merge.
-* ``glasses.xml`` -- two water glasses. MuJoCo has no hollow primitive, so each
-  glass is a ring of thin wall boxes on a disc base, which is tedious and
-  error-prone to write out by hand forty times.
+* ``assets/i2rt_yam/yam_arm.xml``: the arm alone, ending at link_6, the flange
+  an end effector bolts to. Keeps link_6's wrist-motor mesh and its 0.367 kg
+  inertia (mostly motor).
+* ``assets/end_effectors/yam_linear/yam_linear.xml``: the stock linear gripper
+  (fingers, linkage part, finger rails, grasp point, coupling, actuator) plus a
+  D405-style camera on top, as one attachable body with its assets and default
+  classes namespaced ``yam_linear_`` so they cannot collide with the arm's.
 
-tests/test_yam_assets.py regenerates both and fails if the files on disk drift.
+One misassignment is unavoidable: Menagerie fuses the wrist motor and the stock
+gripper's mounting plate into a single mesh, so that plate stays drawn on the
+arm. tests/test_composition.py proves arm + yam_linear reproduces upstream --
+same joints, actuators and masses, identical grasp-point kinematics.
+
+``glasses.xml`` -- two water glasses -- is generated too: MuJoCo has no hollow
+primitive, so each glass is a ring of wall boxes on a disc.
+
+tests/test_yam_assets.py regenerates every file and fails if one drifts.
 """
 
 from __future__ import annotations
 
+import copy
 import math
-import re
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 
@@ -53,14 +63,18 @@ def look_at_xyaxes(pos, target, up) -> str:
 class WristCamera:
     """D405-style eye-in-hand camera, in the frame of the gripper body.
 
+    Part of the end effector, not the arm: a camera on the gripper travels with
+    the gripper, and a different end effector has a different bracket.
+
     Measured, not inferred from where the finger bodies sit: the fingers slide
-    along link_6's x axis (37.4 mm each way), so the +y face is the top of the
-    gripper. At upstream's home (joint6 = 0) link_6 +y is world up and the
-    fingers close horizontally -- the orientation for a side grasp on a
-    standing glass.
+    along the gripper frame's x axis (37.4 mm each way), so the +y face is the
+    top. At the arm's home (joint6 = 0) that face is world up and the fingers
+    close horizontally -- the orientation for a side grasp on a standing glass.
+    The end effector's root sits exactly at link_6, so these coordinates are
+    the same in either frame.
     """
 
-    parent_body: str = "link_6"
+    parent_body: str = "yam_linear"
     mount_body: str = "wrist_d405"
     camera_name: str = "wrist"
     # Housing sits on the gripper's top face: the gripper mesh reaches
@@ -103,25 +117,135 @@ class WristCamera:
         )
 
 
-def build_follower(upstream_xml: str, camera: WristCamera | None = None) -> str:
-    """Upstream yam.xml with a wrist camera, and mesh paths fixed for our layout."""
+ARM_MESHDIR = "upstream/assets"                       # relative to assets/i2rt_yam/
+EE_MESHDIR = "../../i2rt_yam/upstream/assets"         # relative to assets/end_effectors/yam_linear/
+EE_NAME = "yam_linear"
+EE_PREFIX = f"{EE_NAME}_"
+#: Physics the arm was validated with. 1/600 s makes a 30 Hz control period
+#: exactly 20 substeps; upstream leaves MuJoCo's 0.002 default (16.67).
+ARM_TIMESTEP = "0.0016666666666666668"
+
+_FINGER_BODIES = ("link_left_finger", "link_right_finger")
+_RAIL_POSITIONS = ("0 0.039 0.052", "0 -0.039 0.052")
+
+
+def _is_gripper_part(el: ET.Element) -> bool:
+    """The stock gripper's pieces inside upstream's link_6."""
+    if el.tag == "body":
+        return el.get("name") in _FINGER_BODIES
+    if el.tag == "geom":
+        return el.get("mesh") == "model2__12" or el.get("pos") in _RAIL_POSITIONS
+    if el.tag == "site":
+        return el.get("name") == "grasp_site"
+    return False
+
+
+def _to_text(root: ET.Element) -> str:
+    ET.indent(root, space="  ")
+    return GENERATED_HEADER + ET.tostring(root, encoding="unicode") + "\n"
+
+
+def _parse_upstream(upstream_xml: str) -> tuple[ET.Element, ET.Element]:
+    root = ET.fromstring(upstream_xml)
+    link6 = root.find(".//body[@name='link_6']")
+    if link6 is None:
+        raise ValueError("upstream yam.xml no longer has a link_6 body")
+    found = [c for c in link6 if _is_gripper_part(c)]
+    if len(found) != 6:
+        raise ValueError(
+            "upstream yam.xml no longer matches the expected link_6 layout: found "
+            f"{len(found)} of the 6 stock-gripper elements (2 fingers, linkage mesh, "
+            "2 rails, grasp_site). Refusing to split an unrecognised model."
+        )
+    return root, link6
+
+
+def build_arm(upstream_xml: str) -> str:
+    """Upstream minus the stock gripper: the arm, ending at link_6."""
+    root, _ = _parse_upstream(upstream_xml)
+    root.set("model", "yam_arm")
+    root.find("compiler").set("meshdir", ARM_MESHDIR)
+
+    option = root.find("option")
+    if option is None:
+        option = ET.Element("option")
+        root.insert(1, option)
+    option.set("timestep", ARM_TIMESTEP)
+
+    link6 = root.find(".//body[@name='link_6']")
+    for child in [c for c in link6 if _is_gripper_part(c)]:
+        link6.remove(child)
+    for tag in ("equality", "keyframe"):
+        for el in root.findall(tag):
+            root.remove(el)
+    actuators = root.find("actuator")
+    for act in [a for a in actuators if a.get("name") == "gripper"]:
+        actuators.remove(act)
+    worldbody = root.find("worldbody")
+    for light in worldbody.findall("light"):     # lighting is the scene's job
+        worldbody.remove(light)
+
+    used = {g.get("mesh") for g in root.iter("geom") if g.get("mesh")}
+    assets = root.find("asset")
+    for mesh in [m for m in assets.findall("mesh") if Path(m.get("file")).stem not in used]:
+        assets.remove(mesh)
+    return _to_text(root)
+
+
+def build_linear_gripper(upstream_xml: str, camera: WristCamera | None = None) -> str:
+    """The stock gripper as one attachable body, plus a wrist camera on top."""
     camera = camera or WristCamera()
-    text = upstream_xml
+    upstream, link6 = _parse_upstream(upstream_xml)
 
-    # meshdir resolves against the *top-level* model file, not the included
-    # one, and our scenes sit one directory above upstream/.
-    text, count = re.subn(r'meshdir="assets"', 'meshdir="upstream/assets"', text)
-    if count != 1:
-        raise ValueError("expected exactly one meshdir='assets' in upstream yam.xml")
+    ee = ET.Element("mujoco", model=EE_NAME)
+    ET.SubElement(ee, "compiler", angle="radian", meshdir=EE_MESHDIR)
+    ee.append(copy.deepcopy(upstream.find("default")))
 
-    text = text.replace('<mujoco model="yam_v0">', '<mujoco model="yam_follower">', 1)
+    parts = [copy.deepcopy(c) for c in link6 if _is_gripper_part(c)]
+    used_meshes = {g.get("mesh") for p in parts for g in p.iter("geom") if g.get("mesh")}
+    assets = ET.SubElement(ee, "asset")
+    for asset in upstream.find("asset"):
+        if asset.tag == "material" or (
+            asset.tag == "mesh" and Path(asset.get("file")).stem in used_meshes
+        ):
+            assets.append(copy.deepcopy(asset))
 
-    anchor = re.search(r'( *)<site name="grasp_site"[^>]*/>\n', text)
-    if anchor is None or f'name="{camera.parent_body}"' not in text:
-        raise ValueError("upstream yam.xml no longer has the grasp_site anchor on link_6")
-    text = text[: anchor.end()] + camera.mjcf(anchor.group(1)) + text[anchor.end() :]
+    worldbody = ET.SubElement(ee, "worldbody")
+    body = ET.SubElement(worldbody, "body", name=EE_NAME, childclass="yam")
+    # Explicit, negligible inertia: without it MuJoCo derives mass from the rail
+    # collision geoms, which in upstream sit in link_6 where its explicit
+    # inertial overrides them -- 52 g that upstream never had.
+    ET.SubElement(body, "inertial", pos="0 0 0", mass="1e-6", diaginertia="1e-12 1e-12 1e-12")
+    for part in parts:
+        body.append(part)
+    body.append(ET.fromstring(camera.mjcf("")))
 
-    return GENERATED_HEADER + text
+    ee.append(copy.deepcopy(upstream.find("equality")))
+    actuators = ET.SubElement(ee, "actuator")
+    for act in upstream.find("actuator"):
+        if act.get("name") == "gripper":
+            actuators.append(copy.deepcopy(act))
+
+    _namespace(ee, EE_PREFIX)
+    return _to_text(ee)
+
+
+def _namespace(root: ET.Element, prefix: str) -> None:
+    """Prefix default classes, materials and meshes so the part can be attached
+    next to any arm without a name collision."""
+    classes = {d.get("class") for d in root.iter("default") if d.get("class")}
+    for el in root.iter():
+        for attr in ("class", "childclass"):
+            if el.get(attr) in classes:
+                el.set(attr, prefix + el.get(attr))
+        if el.tag == "material":
+            el.set("name", prefix + el.get("name"))
+        elif el.get("material"):
+            el.set("material", prefix + el.get("material"))
+        if el.tag == "mesh":
+            el.set("name", prefix + (el.get("name") or Path(el.get("file")).stem))
+        elif el.get("mesh"):
+            el.set("mesh", prefix + el.get("mesh"))
 
 
 # ------------------------------------------------------------------ glasses

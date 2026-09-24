@@ -7,11 +7,13 @@ is never a change to the loop, the policy or the recorder.
 
 from __future__ import annotations
 
+import functools
+import hashlib
 import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import yaml
@@ -19,15 +21,26 @@ import yaml
 from teleop_sim.core.hashing import content_hash
 from teleop_sim.core.types import ControlMode
 
+if TYPE_CHECKING:
+    from teleop_sim.core.parts import Assembly, SceneSpec
+
 _INCLUDE = re.compile(r"""<include\s+file\s*=\s*["']([^"']+)["']""")
+_FILE_REF = re.compile(r"""\bfile\s*=\s*["']([^"']+)["']""")
+_ASSET_DIR = re.compile(r"""\b(?:meshdir|texturedir|assetdir)\s*=\s*["']([^"']+)["']""")
+
+
+@functools.lru_cache(maxsize=256)
+def _bytes_digest(path: str, mtime_ns: int, size: int) -> str:
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()[:16]
 
 
 def _file_tree_digest(path: str | Path | None) -> str | None:
-    """Hash a model file together with everything it includes.
+    """Hash a model file together with everything it pulls in.
 
-    MuJoCo's <include> is textual, so scene.xml's own bytes say nothing about
-    the arm it pulls in. Without following includes, editing a joint limit in
-    so101.xml would leave the spec hash unchanged.
+    Follows <include> (textual, so scene.xml's own bytes say nothing about the
+    arm it includes) and every file= reference -- meshes and textures -- because
+    a changed finger mesh is a changed robot, and a spec hash that ignored it
+    could not tell a stock gripper's dataset from a production gripper's.
     """
     if not path:
         return None
@@ -38,17 +51,32 @@ def _file_tree_digest(path: str | Path | None) -> str | None:
     seen: set[Path] = set()
     parts: list[str] = []
 
-    def walk(current: Path) -> None:
+    def walk(current: Path, asset_dirs: tuple[Path, ...]) -> None:
         current = current.resolve()
         if current in seen or not current.is_file():
             return
         seen.add(current)
-        text = current.read_text()
+        text = current.read_text(errors="replace")
         parts.append(f"{current.name}:{content_hash(text)}")
-        for included in sorted(_INCLUDE.findall(text)):
-            walk(current.parent / included)
+        asset_dirs = asset_dirs + tuple(current.parent / d for d in _ASSET_DIR.findall(text))
+        includes = set(_INCLUDE.findall(text))
+        for included in sorted(includes):
+            walk(current.parent / included, asset_dirs)
+        for ref in sorted(set(_FILE_REF.findall(text)) - includes):
+            for base in (*asset_dirs, current.parent):
+                candidate = (base / ref).resolve()
+                if candidate.is_file():
+                    if candidate not in seen:
+                        seen.add(candidate)
+                        stat = candidate.stat()
+                        parts.append(
+                            f"{ref}:{_bytes_digest(str(candidate), stat.st_mtime_ns, stat.st_size)}"
+                        )
+                    break
+            else:
+                parts.append(f"{ref}:missing")
 
-    walk(root)
+    walk(root, ())
     return content_hash(sorted(parts))
 
 
@@ -243,6 +271,9 @@ class RobotSpec:
     urdf_path: str | None = field(default=None, metadata={"hash": False})
     default_control_mode: ControlMode = ControlMode.JOINT_POSITION
     control_hz: float = 30.0
+    #: The arm / end effector / scene this spec was composed from, or None for a
+    #: monolithic description. See teleop_sim/core/parts.py.
+    assembly: Assembly | None = None
     source_path: Path | None = field(default=None, metadata={"hash": False})
 
     def __post_init__(self) -> None:
@@ -351,11 +382,24 @@ class RobotSpec:
         return content_hash({"spec": self, "assets": self.asset_digests()})
 
     def asset_digests(self) -> dict[str, str | None]:
-        """Content digests of the model files, following MJCF includes."""
+        """Content digests of every model file behind this spec, meshes included."""
+        if self.assembly is not None:
+            scene = self.assembly.scene
+            return {
+                "arm": _file_tree_digest(self.assembly.arm.mjcf_path),
+                "end_effector": _file_tree_digest(self.assembly.end_effector.mjcf_path),
+                "scene": _file_tree_digest(scene.mjcf_path) if scene else None,
+            }
         return {
             "mjcf": _file_tree_digest(self.mjcf_path),
             "urdf": _file_tree_digest(self.urdf_path),
         }
+
+    def with_scene(self, scene: SceneSpec | None) -> RobotSpec:
+        """This robot placed in a different cell, or in none."""
+        from teleop_sim.core.parts import with_scene
+
+        return with_scene(self, scene)
 
     # ------------------------------------------------------------------ load
 
@@ -407,6 +451,10 @@ class RobotSpec:
             data = yaml.safe_load(handle)
         if not isinstance(data, dict):
             raise SpecError(f"robot spec {path} must contain a YAML mapping")
+        if "arm" in data or "end_effector" in data:
+            from teleop_sim.core.parts import load_composition
+
+            return load_composition(path.resolve(), data)
         try:
             return cls.from_dict(data, source_path=path.resolve())
         except SpecError as exc:

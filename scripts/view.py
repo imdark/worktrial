@@ -20,16 +20,20 @@ import math
 import time
 
 from teleop_sim.core.clock import WallClock
+from teleop_sim.core.parts import SceneSpec
 from teleop_sim.core.spec import RobotSpec
 from teleop_sim.core.types import Action
 from teleop_sim.robots.sim.mujoco_robot import MujocoRobot
 
 DEFAULT_SPEC = "teleop_sim/robots/specs/yam.yaml"
+DEFAULT_SCENE = "teleop_sim/scenes/glasses_table.yaml"
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--spec", default=DEFAULT_SPEC)
+    parser.add_argument("--scene", default=DEFAULT_SCENE,
+                        help="scene description, or 'none' for the bare robot")
     parser.add_argument("--seconds", type=float, default=30.0)
     parser.add_argument("--amplitude", type=float, default=0.12, help="fraction of each range")
     args = parser.parse_args()
@@ -37,6 +41,9 @@ def main() -> None:
     import mujoco.viewer
 
     spec = RobotSpec.from_yaml(args.spec)
+    if spec.assembly is not None:
+        scene = None if args.scene == "none" else SceneSpec.from_yaml(args.scene)
+        spec = spec.with_scene(scene)
     clock = WallClock()
     robot = MujocoRobot(spec, clock, render_cameras=[])
     robot.connect()

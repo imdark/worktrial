@@ -9,3 +9,5 @@ data/
 outputs/
 calib/
 .DS_Store
+build/
+MUJOCO_LOG.TXT
