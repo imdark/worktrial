@@ -1,9 +1,11 @@
 # Teleop Simulator — Design Document
 
-**Status:** Draft v3 · 2026-09-24
+**Status:** Draft v3.1 · 2026-09-24
 **Scope:** End-to-end pipeline: teleoperated demonstration collection → imitation learning → **autonomous manipulation** → sim2real transfer, with a two-level (slow planner / fast controller) policy as the end state.
 
 > **v3 changes.** Seam list re-derived and made honest (§2). Asynchronous / multi-rate inference made a first-class loop concern (§3.4). `PolicySpec` and startup capability negotiation added (§4.3). Force/current sensing added to `Observation` and declared in `RobotSpec` (§4.1). `Task` decomposed into `SuccessDetector` + `ResetStrategy` + concrete scene code (§3.3). Dataset provenance stamping added (§4.5). Interface conformance suite added (§5.1). Full list in §11.
+>
+> **v3.1 changes.** Concurrency model made explicit (§3.5): which thread owns what, threads-not-processes and why, and the 30–100 Hz question. Per-stream image capture timestamps added (§4.1). Capture concurrency is per-component and config-driven, because threaded capture costs bit-exact replay (§6).
 
 ---
 
@@ -50,7 +52,7 @@ This is a priced decision, not an oversight. If bimanual becomes real, budget a 
 1. **A seam must be earned, and the list is closed.** An interface exists only where we will genuinely swap an implementation, and only where we can already name the second implementation. Eight seams qualify (§2.1). Everything else is written concretely. Adding a ninth requires naming the two implementations that force it.
 2. **Hardware as data.** A `RobotSpec` YAML (joints, limits, end-effector, gripper calibration, camera mounts, **sensing capabilities**, control rate) drives both the simulated robot and the real driver. One source of truth means sim and real cannot silently diverge.
 3. **Canonical units at every boundary.** Radians for joints. Gripper normalized to `[0, 1]`. Monotonic timestamps on every sample. Native units (servo ticks, degrees, metres of finger travel) exist only inside a driver. **This is enforced by a conformance suite (§5.1), not by convention.**
-4. **One control loop.** Sim teleop, real teleop, autonomous sim rollout, and autonomous real execution are the same function with different objects passed in. Bugs get fixed once.
+4. **One control loop — one code path, not one thread.** Sim teleop, real teleop, autonomous sim rollout, and autonomous real execution are the same function with different objects passed in, so bugs get fixed once. Sensor capture, inference, and disk writes run *off* that thread (§3.5); the loop thread's own work stays small enough to be boring.
 5. **A human and a policy are the same thing to the loop.** Both are `ActionSource`s (§3.2). Autonomy is therefore a config change, not a second code path — and shared control is a third `ActionSource` rather than a special case.
 6. **Sim and real implement the same interface.** `MujocoRobot` and `FeetechRobot` are interchangeable. So is `ZMQRobotClient`, which is how a cloud GPU drives a local arm with zero code change.
 7. **The loop owns time; nothing else may block it.** A source that cannot answer within a tick returns its freshest answer and reports staleness. Inference latency is measured and logged, never absorbed silently (§3.4).
@@ -190,6 +192,43 @@ One wrapper covers the VLM, the remote policy, any slow diffusion/VLA checkpoint
 
 `staleness_ms` is recorded per step from Stage 2. It is the single most useful number for diagnosing a policy that works in eval and fails live, and for the Stage 10 sim2real latency model.
 
+### 3.5 Concurrency model — which thread owns what
+
+Principle 4 says *one control loop*. That is one **code path**, not one thread, and the distinction starts to matter the moment real hardware is attached.
+
+**The arithmetic.** At 30 Hz the tick budget is 33.3 ms. Run sequentially on the hardware path:
+
+| Step | Rough order | Nature |
+|---|---|---|
+| 2 × USB camera `read()` | 10–30 ms | **blocking wait** for the next frame |
+| Feetech sync-read, 6 servos @ 1 Mbaud | 2–5 ms | serial I/O |
+| ACT inference on MPS | 10–30 ms | native compute |
+| Servo write | 1–2 ms | serial I/O |
+| Recorder append + video encode | 2–20 ms, spiky | disk |
+
+These are order-of-magnitude estimates to size the problem, not measurements — Stage 2's latency logging produces the real ones. The shape is not in doubt: roughly 50 ms sequentially, so ~18 Hz with jitter, and the single largest item is a camera call that spends its time doing nothing but waiting.
+
+**Off the loop thread** — anything that waits on I/O or takes unbounded time:
+
+| Work | Mechanism | Hand-off |
+|---|---|---|
+| Camera capture | one grabber thread per camera | single-slot latest-frame buffer, stale frames dropped |
+| Policy inference | `AsyncPolicySource` (§3.4) | chunk buffer |
+| Recording, video encode | writer thread + subprocess encoder | bounded queue; a full queue is a counted event, never a silent block |
+| Leader-arm polling | device thread, once it is a serial device | single-slot latest-command buffer |
+
+**On the loop thread, always.** The joint read inside `get_observation()` and `send_action()` — both fast, and their ordering is the determinism worth protecting. The `SafetyMonitor` check, because it *gates* the action: a watchdog that trips 40 ms late on another thread is not a watchdog. The clock and the rate limiter. Target ≤5 ms of loop-thread work, with everything else a read from a slot someone else filled.
+
+**Threads, not processes — and the GIL is not the obstacle.** The GIL serializes Python bytecode, and almost nothing expensive here is Python bytecode: camera grabs, serial I/O, torch inference and MuJoCo stepping are native calls that release it while they run. (Worth verifying per binding rather than assuming, but that is the shape.) Processes earn their place in exactly one part of this project, and it is not the control loop: **Stage 6's batch evaluation** is embarrassingly parallel *across episodes* — N worker processes, each running an ordinary sequential loop. Latency hiding and throughput are different problems; do not reach for the same mechanism twice.
+
+**No asyncio.** The libraries here are blocking C calls, not awaitables. Wrapping them in `run_in_executor` is threads again, bought at the price of colouring the whole codebase `async`.
+
+**The 30–100 Hz question.** Objective 5's upper bound leaves a 10 ms budget, where CPython on macOS — GC pauses, no real-time scheduling — is genuinely marginal. We largely dodge it by construction: with `JOINT_POSITION` as the default action space (§4.2), the servos close their own PID loop internally at kHz rates and Python is a **setpoint generator, not a servo controller**. 30–50 Hz of setpoints is sufficient. If a real >100 Hz software loop is ever needed, that is a signal to push it into the driver or the firmware, not to optimize Python. Cheap insurance meanwhile: preallocated arrays, `gc.freeze()` after setup, and `gc.disable()` during an episode with a manual collect between episodes.
+
+**Concurrency is per-component and config-driven, because determinism has a price.** Threaded capture destroys bit-exact replay, and Stage 3's exit criterion depends on replay. So simulation defaults to synchronous capture and hardware to threaded (§6). The loop code is identical either way — the threads live *inside* components behind the `Camera`, `ActionSource` and `Recorder` seams, which is exactly what those seams are for.
+
+**Sequence this work by measurement, not by guess.** Build Stage 2 sequential, read the per-stage latency breakdown it already logs, then thread the largest item. Expected order: cameras, then policy, then recorder.
+
 ---
 
 ## 4. Core contracts
@@ -200,9 +239,10 @@ Condensed; full definitions land in `teleop_sim/core/`.
 
 ```python
 Observation:  images: dict[str, ndarray]   # name -> HxWx3 uint8
+              image_timestamps: dict[str, float]   # per-stream CAPTURE time
               joint_pos: ndarray           # radians
               gripper: float               # 0 = open, 1 = closed
-              timestamp: float             # monotonic
+              timestamp: float             # monotonic, when obs was assembled
               joint_vel: ndarray | None
               joint_current: ndarray | None  # amps    — None when unsensed
               joint_torque: ndarray | None   # Nm      — None when unsensed
@@ -237,6 +277,8 @@ EpisodeResult: outcome: "success" | "failure" | "timeout" | "watchdog" | "aborte
                staleness_ms: {p50, p95, max}
                underruns: int
 ```
+
+**Per-stream capture timestamps are the fix for a hole that opens the moment capture goes threaded.** A single scalar `timestamp` is only honest while capture is synchronous. Once cameras run on their own grabber threads (§3.5), each frame carries its own capture time, lagging the joint read by a variable 10–30 ms. Stamped at capture and recorded, that offset is visible and modellable — and it feeds the Stage 10 latency model. Collapsed into one scalar, it becomes an image/state misalignment that jitters frame to frame and looks exactly like a bad policy.
 
 **Sensing fields are the fix for a v2 hole:** `SafetyMonitor` was given ownership of a "force limit" while `Observation` carried nothing to read. Force and current are now first-class and explicitly nullable, because most position-controlled hobby servos cannot report them.
 
@@ -288,7 +330,7 @@ The safety config is checked here too: a configured force limit against `sensing
 
 ### 4.4 Rate and staleness contract
 
-The loop owns the clock (principle 7). Every step records `dt`, `inference_ms`, `staleness_ms`, and an `underrun` flag. A source that consistently underruns is a configuration error the harness reports, not a mystery.
+The loop owns the clock (principle 7). Every step records `dt`, `inference_ms`, `staleness_ms` (action age, §3.4), per-stream **sensor age** (`now - image_timestamps[name]`), and `underrun` flags for both the action buffer and any camera slot that served a repeated frame. A source or sensor that consistently underruns is a configuration error the harness reports, not a mystery. `max_staleness_ms` and `cameras.max_age_ms` are config bounds; on hardware, exceeding them is a `SafetyMonitor` trip rather than a log line.
 
 ### 4.5 Dataset provenance
 
@@ -307,12 +349,12 @@ teleop_sim/
               specs/*.yaml
   teleop/     leader_arm · keyboard · spacemouse · vr_quest
   retarget/   joint_map · ik · delta
-  cameras/    sim_cam · opencv_cam · realsense_cam
+  cameras/    sim_cam · opencv_cam · realsense_cam · async_capture   # grabber thread + slot
   envs/       scene · randomization · tasks/pick_place       # sim-only, concrete
   success/    sim_state · learned · fixture · human          # seam 6
   reset/      sim_rerandomize · scripted_replace · human_batch  # seam 7
   policies/   scripted · act · remote_policy · hierarchical
-  control/    loop · rate · latency · compat · safety/{sim_watchdog,hardware_safety}
+  control/    loop · rate · latency · compat · concurrency · safety/{sim_watchdog,hardware_safety}
               sources/{teleop_source,policy_source,async_policy_source,shared_source}
   eval/       harness · failures · report
   data/       recorder · lerobot_adapter · replay
@@ -322,7 +364,7 @@ tests/        fakes · conformance/ · test_loop · test_retarget · test_safety
 assets/       <robot>/ · objects/ · textures/
 ```
 
-`success/` and `reset/` are lifted out of `envs/` because `envs/` reads as sim-only and both have real-hardware implementations (§3.3). `control/safety/` replaces the single `watchdog.py` for the same reason.
+`success/` and `reset/` are lifted out of `envs/` because `envs/` reads as sim-only and both have real-hardware implementations (§3.3). `control/safety/` replaces the single `watchdog.py` for the same reason. `cameras/async_capture.py` and `control/concurrency.py` hold every thread in the system (§3.5) — one place to look when a rate goes wrong.
 
 ### 5.1 The conformance suite
 
@@ -353,6 +395,7 @@ success:  {type: sim_state,  tolerance_m: 0.03}
 reset:    {type: sim_rerandomize, xy_range: 0.12, yaw: true}
 task:     {type: pick_place, objects: [cube_red]}
 safety:   {type: sim_watchdog, max_steps: 600, stall_secs: 3.0, enforce_workspace: true}
+cameras:  {async: false}          # synchronous capture — bit-exact replay (§3.5)
 record:   {fps: 30, root: data/pickplace_sim_v1}
 ```
 
@@ -363,6 +406,8 @@ source:   {type: async_policy, policy: {type: remote, endpoint: tcp://gpu:5555},
            on_underrun: hold_last, max_staleness_ms: 150}
 safety:   {type: hardware_safety, max_current_a: 1.8, enforce_workspace: true,
            estop: /dev/tty.estop, on_trip: safe_stop}
+cameras:  {async: true, max_age_ms: 40}   # grabber threads, stale frames dropped
+record:   {fps: 30, queue_depth: 120, encoder: subprocess}
 ```
 
 Switching from teleoperated to autonomous is `source.type: teleop` → `source.type: policy` (or `async_policy`) plus a checkpoint path. Switching from sim to hardware is `robot.type: mujoco` → `robot.type: feetech`, and — because §3.3 separated them — `success.type` and `reset.type` change with it. Neither touches code. The startup check (§4.3) then validates the combination before anything moves.
@@ -393,14 +438,15 @@ The narrative arc: **teleoperate in sim → run autonomously in sim → teleoper
 
 #### Stage 2 · Control loop, action sources, and asynchrony
 **Goal.** A human can drive the simulated arm, through the abstraction that will later carry slow policies.
-**Builds.** `control/loop.py`, `control/rate.py`, `control/latency.py`, `control/sources/{teleop_source,policy_source,async_policy_source}`, `teleop/keyboard.py`, `retarget/joint_map.py`.
-**Exit.** Keyboard teleop moves the arm at a stable 30 Hz *via a* `TeleopSource`; swapping in a trivial constant-action `PolicySource` runs the identical loop with no human attached; **a deliberately slow (100 ms) policy behind `AsyncPolicySource` holds 30 Hz with staleness and underruns logged per step**; rate jitter and per-step latency are logged.
-**Note.** The two swaps *are* the exit criterion. If either needs loop changes, the abstraction is wrong, and it is far cheaper to fix here than at Stage 6 (autonomy) or Stage 12 (the VLM), by which point trained policies depend on the old timing.
+**Builds.** `control/loop.py`, `control/rate.py`, `control/latency.py`, `control/concurrency.py`, `control/sources/{teleop_source,policy_source,async_policy_source}`, `teleop/keyboard.py`, `retarget/joint_map.py`.
+**Exit.** Keyboard teleop moves the arm at a stable 30 Hz *via a* `TeleopSource`; swapping in a trivial constant-action `PolicySource` runs the identical loop with no human attached; **a deliberately slow (100 ms) policy behind `AsyncPolicySource` holds 30 Hz with staleness and underruns logged per step**; rate jitter and a **per-stage latency breakdown** (capture · joint read · source · send · record) are logged.
+**Note.** The two swaps *are* the exit criterion. If either needs loop changes, the abstraction is wrong, and it is far cheaper to fix here than at Stage 6 (autonomy) or Stage 12 (the VLM), by which point trained policies depend on the old timing. Build the loop sequential and thread nothing yet: the per-stage breakdown is what decides *what* to thread, and guessing wastes the measurement (§3.5).
 
 #### Stage 3 · Recording, replay, inspection
 **Goal.** Demonstrations become a dataset.
 **Builds.** `data/recorder.py`, `data/lerobot_adapter.py`, `data/replay.py`, provenance stamping (§4.5).
-**Exit.** Record 10 episodes; replay them open-loop into a fresh sim and observe substantially the same trajectory; dataset loads with the LeRobot dataset API; **every episode carries its `RobotSpec` and hash, and a deliberate spec edit makes the hash change**; a visualizer shows synchronized camera streams, joint traces, and staleness.
+**Exit.** Record 10 episodes; replay them open-loop into a fresh sim and observe substantially the same trajectory; dataset loads with the LeRobot dataset API; **every episode carries its `RobotSpec` and hash, and a deliberate spec edit makes the hash change**; a visualizer shows synchronized camera streams, joint traces, staleness, and sensor age.
+**Note.** Replay determinism requires `cameras.async: false` (§3.5). That is why capture concurrency is a per-component config field rather than a global mode.
 **Note.** Adopt the LeRobot dataset format here and do not deviate. The adapter is roughly 80 lines and unlocks their training code, their pretrained checkpoints, and Hub hosting.
 
 ---
@@ -445,8 +491,8 @@ This milestone delivers a robot that performs the task by itself, before any har
 
 #### Stage 9 · Real robot driver and remote execution
 **Goal.** The same loop drives physical hardware.
-**Builds.** `robots/real/<driver>.py` for the actual arm, `robots/remote/{zmq_client,zmq_server}.py` (with frame compression), hand-eye camera calibration.
-**Exit.** `robot.type` swapped in config drives the real arm with no other change; **the real driver passes the conformance suite on the bench**; a policy running on a remote GPU controls the local arm through `AsyncPolicySource`; network round-trip latency appears as `staleness_ms` in the logged stream.
+**Builds.** `robots/real/<driver>.py` for the actual arm, `robots/remote/{zmq_client,zmq_server}.py` (with frame compression), `cameras/async_capture.py`, hand-eye camera calibration.
+**Exit.** `robot.type` swapped in config drives the real arm with no other change; **the real driver passes the conformance suite on the bench**; a policy running on a remote GPU controls the local arm through `AsyncPolicySource`; network round-trip latency appears as `staleness_ms` in the logged stream; **threaded capture holds 30 Hz on real cameras**, with per-stream capture timestamps recorded and dropped-frame counts reported.
 **Risk.** This is where the `RobotSpec` abstraction gets its real test. Expect to discover spec fields that were missing. The spec hash (§4.5) makes the resulting dataset split visible instead of silent.
 
 #### Stage 10 · Sim2real transfer
@@ -503,6 +549,9 @@ This milestone delivers a robot that performs the task by itself, before any har
 | Autonomous run damages hardware | Stage 11b safety layer; staged ramp from supervised to unattended; workspace bounds in the spec from Stage 0; force limits refuse to arm without backing sensing |
 | Autonomous failures are unmeasurable / anecdotal | Stage 6 failure taxonomy and batch harness before any autonomy claim; Stage 11a extends this to hardware |
 | Hidden latency (control loop or network) degrades real performance | Timestamp everything from Stage 0; `staleness_ms` logged per step from Stage 2; model actuation delay in sim from Stage 10 |
+| Sequential loop cannot hold rate on hardware | Capture, inference and disk writes run off the loop thread (§3.5); per-stage latency measured at Stage 2 before anything is threaded |
+| Threaded capture misaligns images and joint state | Per-stream capture timestamps in `Observation`; sensor age logged per step and bounded by `cameras.max_age_ms` |
+| Threading destroys reproducible replay | Capture concurrency is a per-component config field; sim defaults to synchronous |
 | Slow inference silently degrades control | `AsyncPolicySource` with counted underruns and an explicit fallback; slow-policy test in Stage 2's exit criterion |
 | Checkpoint/robot mismatch degrades quietly | `PolicySpec` + `check_compatibility` at construction; camera names are a hard contract |
 | Spec revision silently poisons old datasets | Spec hash in every episode; `train.py` refuses mixed specs without an explicit flag |
@@ -522,7 +571,15 @@ This milestone delivers a robot that performs the task by itself, before any har
 
 ## 11. Changelog
 
-**v3 (this revision)** — addresses seven findings from design review:
+**v3.1 (this revision)** — concurrency made explicit:
+
+1. **§3.5 added.** Which thread owns what, with the 30 Hz budget arithmetic that forces it. Capture, inference and recording move off the loop thread; the joint read, `send_action` and the `SafetyMonitor` check stay on it. Threads over processes (the hot calls are native and release the GIL); processes reserved for Stage 6 batch eval, which is parallel across *episodes*. asyncio rejected. The 30–100 Hz upper bound is dodged by `JOINT_POSITION` — the servos close their own loop, so Python generates setpoints rather than servoing.
+2. **Per-stream capture timestamps** added to `Observation` (§4.1) and to the step record (§4.4). A single scalar timestamp is only honest while capture is synchronous.
+3. **Capture concurrency is per-component and config-driven** (§6), because threaded capture costs the bit-exact replay that Stage 3's exit criterion depends on. Sim defaults synchronous, hardware threaded.
+
+Also: principle 4 now says *one code path, not one thread*; Stage 2 logs a per-stage latency breakdown and explicitly threads nothing until it is read; Stage 9 adds threaded capture; three risk rows.
+
+**v3** — addresses seven findings from design review:
 
 1. **Morphology claim corrected.** v2 asserted no non-goal was precluded by the architecture; the flat `joint_pos` + scalar `gripper` types do preclude bimanual and dexterous hands. Now a stated, priced decision (§1, §4.1).
 2. **Asynchronous inference made first-class.** v2's blocking `get_action` was incompatible with its own objective 5, plus remote policies and Stage 13. Buffering and threading moved from `Policy` into `PolicySource`/`AsyncPolicySource`; `staleness_ms` and underruns logged from Stage 2 (§3.4, principle 7).
