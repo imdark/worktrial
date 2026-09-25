@@ -13,6 +13,14 @@
 #               calibration, 663 ticks = ~58 deg. Nominal kronos.yaml opens 28 deg.
 #               The assembler widens the finger joints' range to allow it.
 #   wrist fovy  62.8 deg from the real D405 (fy 393.4 px at 480 rows).
+#   wrist pose  6 mm along the camera's -x and 6 mm up its y, turned 2 deg about y
+#               and -3.5 deg about z, relative to the nominal mount. Fitted
+#               2026-09-25 by rendering the wrist camera at the logged joints of
+#               five real images and maximising the gripper-outline overlap
+#               (IoU 0.64 -> 0.77); moves cup estimates ~1.9 cm to the arm's left,
+#               where the operator saw the jaws closing right of the cup's centre.
+#               Fitting it to survey/closer-view agreement as well overfits (one
+#               view pair; overlap drops to 0.72), so that was not used.
 
 name: kronos_gem13
 version: "1"
@@ -32,6 +40,6 @@ gripper:
 cameras:
   - name: wrist
     mount: kronos_camera
-    pose: [0.0, 0.0, -0.0115, 1.0, 0.0, 0.0, 0.0]
+    pose: [-0.006, 0.006, -0.0115, 0.999381, -0.000533, 0.017444, -0.030534]
     fovy_deg: 62.8
     resolution: [640, 480]

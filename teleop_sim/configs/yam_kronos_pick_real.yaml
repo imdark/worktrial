@@ -15,7 +15,10 @@
 
 robot:
   type: robots_realtime
-  spec: ../robots/specs/yam_kronos.yaml
+  # gem13's arm as measured (end_effectors/kronos_gem13.yaml): 2 deg tool pitch,
+  # wrist camera pose fitted to real images, D405 fov, jaw travel. Planning and
+  # perception use it, so no pitch trim is needed.
+  spec: ../robots/specs/yam_kronos_gem13.yaml
   # A direct Ethernet link to the rig is IPv6 link-local only, which ZMQ will
   # not use, and it drops every minute or so. Tunnel the bus over SSH and point
   # here with --host 127.0.0.1 --ports 15555 15556 (see README, sim-to-real).
@@ -65,9 +68,11 @@ source:
     # Needs an object <= ~70 mm across at 50 mm height (the frosted cup is ~79).
     # Run 2 (17:39) succeeded at 20 deg / 50 mm but gripped too low and too
     # nose-down. At ~0.55 m out, 10 deg / 80 mm is reachable (lowest point ~17 mm).
-    # pitch_trim_deg: the level check (17:45) put the real camera ~2 deg further
+    # (Until 2026-09-25 the nominal model was used here with pitch_trim_deg: 2.0;
+    # the calibrated spec now carries that 2 deg, and the camera fit.) The level
+    # check (17:45) put the real camera ~2 deg further
     # nose-down than the model for the same joints (Kronos mount is inferred).
-    grasp: {past_centre: 0.0, height: 0.08, pitch_deg: 10.0, standoff: 0.08, pitch_trim_deg: 2.0}
+    grasp: {past_centre: 0.0, height: 0.08, pitch_deg: 10.0, standoff: 0.08}
     max_joint_speed: 0.25   # slow on purpose
     approach_speed: 0.10
     settle_seconds: 0.8

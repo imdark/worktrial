@@ -134,12 +134,17 @@ def build_mjspec(spec: RobotSpec):
     arm = _load(parts.arm.mjcf_path, arm_label)
     end_effector = _load(parts.end_effector.mjcf_path, ee_label)
 
-    # The description is the source of truth for its cameras' field of view,
-    # so a rig-calibrated variant can carry a measured fovy without a new MJCF.
+    # The description is the source of truth for its cameras' pose (in their
+    # mount body) and field of view, so a rig-calibrated variant can carry a
+    # measured camera without a new MJCF. Nominal descriptions match their MJCF.
+    mujoco = _mujoco()
     for camera in parts.end_effector.cameras:
         found = end_effector.camera(camera.name)
         if found is not None:
             found.fovy = camera.fovy_deg
+            found.pos = list(camera.pose[:3])
+            found.quat = list(camera.pose[3:])
+            found.alt.type = mujoco.mjtOrientation.mjORIENTATION_QUAT
     _widen_gripper_travel(end_effector, parts.end_effector.gripper)
 
     mount = parts.end_effector.mount
