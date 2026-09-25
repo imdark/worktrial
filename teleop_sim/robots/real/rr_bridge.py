@@ -71,6 +71,7 @@ class RobotsRealtimeRobot(Robot):
         link_grace_s: float = 3.0,
         connect_timeout_s: float = 15.0,
         rgb_order: str = "rgb",
+        camera_port: int | None = None,
     ) -> None:
         self.spec = spec
         self.clock = clock
@@ -90,6 +91,10 @@ class RobotsRealtimeRobot(Robot):
         if rgb_order not in ("rgb", "bgr"):
             raise ValueError("rgb_order must be 'rgb' or 'bgr'")
         self.rgb_order = rgb_order
+        # Cameras from a separate port (camera_relay.py on the rig): over a slow
+        # link the full-rate camera streams delay everything sharing their socket.
+        self.camera_port = None if camera_port is None else int(camera_port)
+        self._cam_sub: BusSubscriber | None = None
 
         self._pub: BusPublisher | None = None
         self._sub: BusSubscriber | None = None
@@ -107,16 +112,25 @@ class RobotsRealtimeRobot(Robot):
     def connect(self) -> None:
         if self._sub is not None:
             return
-        topics = [self.state_topic, *self.camera_topics.values()]
-        self._sub = BusSubscriber(self.host, topics, port=self.sub_port)
+        cameras = list(self.camera_topics.values())
+        if self.camera_port is None:
+            self._sub = BusSubscriber(self.host, [self.state_topic, *cameras], port=self.sub_port)
+        else:
+            self._sub = BusSubscriber(self.host, [self.state_topic], port=self.sub_port)
+            self._cam_sub = BusSubscriber(self.host, cameras, port=self.camera_port)
         self._pub = BusPublisher(self.host, port=self.pub_port)
         self._halted = False
 
     def disconnect(self) -> None:
-        for sock in (self._pub, self._sub):
+        for sock in (self._pub, self._sub, self._cam_sub):
             if sock is not None:
                 sock.close()
-        self._pub = self._sub = None
+        self._pub = self._sub = self._cam_sub = None
+
+    def _rec(self, topic: str):
+        if self._cam_sub is not None and topic in self.camera_topics.values():
+            return self._cam_sub.get(topic)
+        return self._sub.get(topic)
 
     def _wait_for(self, topics: list[str], timeout: float) -> None:
         deadline = time.monotonic() + timeout
@@ -124,13 +138,13 @@ class RobotsRealtimeRobot(Robot):
             missing = [
                 t
                 for t in topics
-                if self._sub.get(t) is None
-                or self._sub.get(t).age() > max(self.state_timeout_s, 1.0)
+                if self._rec(t) is None
+                or self._rec(t).age() > max(self.state_timeout_s, 1.0)
             ]
             if not missing:
                 return
             time.sleep(0.05)
-        seen = self._sub.topics()
+        seen = self._sub.topics() + (self._cam_sub.topics() if self._cam_sub else [])
         raise RobotLinkLost(
             f"no fresh data from {self.host} on {missing} within {timeout:.0f}s "
             f"(topics seen: {seen or 'none'}). Is rr-session running on the rig, and is "
@@ -197,11 +211,18 @@ class RobotsRealtimeRobot(Robot):
         grip_rr = float(np.asarray(state.get("gripper_pos", [1.0])).ravel()[0])
         images, intrinsics, depth = {}, {}, {}
         for name, topic in self.camera_topics.items():
-            rec = self._sub.get(topic)
+            rec = self._rec(topic)
             if rec is None or rec.age() > self.link_grace_s:
                 raise RobotLinkLost(f"camera {name} ({topic}) went stale")
             msg = rec.data
-            rgb = np.asarray(msg["images"]["rgb"], dtype=np.uint8)
+            if "rgb_jpeg" in msg["images"]:  # from camera_relay.py: JPEG of RGB
+                import cv2
+
+                bgr = cv2.imdecode(np.frombuffer(msg["images"]["rgb_jpeg"], np.uint8),
+                                   cv2.IMREAD_COLOR)
+                rgb = bgr[:, :, ::-1]
+            else:
+                rgb = np.asarray(msg["images"]["rgb"], dtype=np.uint8)
             images[name] = np.ascontiguousarray(rgb[:, :, ::-1] if self.rgb_order == "bgr" else rgb)
             if msg.get("intrinsics"):
                 intrinsics[name] = dict(msg["intrinsics"])

@@ -435,7 +435,11 @@ class PickLiftPlacePolicy(Policy):
             model=det.model,
             note=det.note,
             base_px=None if det.base is None else (round(det.base.u), round(det.base.v)),
+            rim_px=None if det.rim is None else (round(det.rim.u), round(det.rim.v)),
             table_xy=None if point is None else point[:2].round(4),
+            # What the geometry used, so a miss can be re-derived offline.
+            joints=obs.joint_pos.round(5),
+            camera_pos=camera.position.round(4),
         )
         if point is None:
             return None

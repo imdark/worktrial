@@ -118,8 +118,18 @@ def main() -> int:
     ap.add_argument("--target-body", default="glass_right", help="oracle: the body to pick (sim)")
     ap.add_argument("--instruction", help="override the task instruction")
     ap.add_argument("--host", help="robots_realtime host (real rig)")
-    ap.add_argument("--ports", type=int, nargs=2, metavar=("PUB", "SUB"),
-                    help="bus ports, e.g. the local ends of an SSH tunnel")
+    ap.add_argument(
+        "--camera-port",
+        type=int,
+        help="read cameras from a camera_relay.py on the rig (slow links, e.g. Tailscale)",
+    )
+    ap.add_argument(
+        "--ports",
+        type=int,
+        nargs=2,
+        metavar=("PUB", "SUB"),
+        help="bus ports, e.g. the local ends of an SSH tunnel",
+    )
     gate = ap.add_mutually_exclusive_group()
     gate.add_argument(
         "--confirm",
@@ -161,7 +171,8 @@ def main() -> int:
         policy_cfg["vision"] = {"type": "laya", "fallback": policy_cfg.get("vision", {})}
     elif args.vision == "laya-oracle":
         policy_cfg["vision"] = {
-            "type": "laya", "fallback": {"type": "oracle", "target_body": args.target_body}
+            "type": "laya",
+            "fallback": {"type": "oracle", "target_body": args.target_body},
         }
     if args.look_only:
         policy_cfg["look_only"] = True
@@ -171,6 +182,8 @@ def main() -> int:
         policy_cfg["instruction"] = args.instruction
     if args.host:
         config.robot["host"] = args.host
+    if args.camera_port:
+        config.robot["camera_port"] = args.camera_port
     if args.ports:
         config.robot["pub_port"], config.robot["sub_port"] = args.ports
 
