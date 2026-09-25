@@ -396,6 +396,28 @@ glass held in sim. It runs in its own venv because it needs
 `transformers >= 5.3`, which lerobot 0.3.2 rejects. **The weights are
 CC BY-NC-SA 4.0 — not for commercial use.**
 
+#### Fine-tuning it on the rig's own frames
+
+`scripts/collect_real_picks.py` records every episode's wrist frames with a
+label from the gripper, not from a model (`teleop_sim/telemetry.py`: jaws
+closed and stopped short → held; jaws open → not held; jaws moving →
+uncertain, dropped). Then:
+
+```bash
+python scripts/export_laya_dataset.py runs/collect_<ts> --val 8 9 --test 10   # -> data/laya/gem13_held
+PY=third_party/laya-vision/.venv/bin/python
+$PY scripts/train_laya_verify.py --eval-only                     # zero-shot baseline
+$PY scripts/train_laya_verify.py --steps 300 --freeze last_n     # fine-tune, calibrate, save
+$PY scripts/laya_server.py --model third_party/laya-vision-ft/<run>/checkpoint
+```
+
+Splits are by episode. On the first batch (10 real picks, 1,149 frames),
+zero-shot laya-vision scored AUROC 0.83 on val / test and could not separate
+the cup sitting between open fingers (reach-in, P(held) 0.58) from a held cup;
+a 20-step smoke fine-tune reached 0.885 / 0.884. That batch has **no hard
+negatives** (jaws closed on nothing), so a fine-tuned model may learn
+"closed jaws = held": collect deliberate misses before trusting its "no".
+
 ### Running on a robots_realtime rig
 
 1. On the rig, the operator launches the session that owns CAN, the motors and
