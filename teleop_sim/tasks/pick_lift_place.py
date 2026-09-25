@@ -130,6 +130,7 @@ class PickLiftPlacePolicy(Policy):
         max_bias_deg: float = 8.6,
         planning_spec: str | None = None,
         fuse_views_above: float = 0.015,
+        place_xy: list[float] | None = None,
     ) -> None:
         self.robot_spec = spec
         self.clock = clock
@@ -182,6 +183,10 @@ class PickLiftPlacePolicy(Policy):
         self.max_bias = math.radians(float(max_bias_deg))
         # Survey vs closer-view gap (m) above which the grasp uses their mean.
         self.fuse_views_above = float(fuse_views_above)
+        # Where to put the object down (table xy); None puts it back where found.
+        self.place_xy = None if place_xy is None else [float(v) for v in place_xy]
+        self.placed_xy: np.ndarray | None = None
+        self.phase = "start"
         self.hz = spec.control_hz
 
         # The planner's model. Normally the robot's own spec; a sim-to-real
@@ -260,6 +265,8 @@ class PickLiftPlacePolicy(Policy):
         self._events: set[str] = set()
         self.outcome: str | None = None
         self.failure_tag: str | None = None
+        self.placed_xy = None
+        self.phase = "start"
 
     def poll_events(self) -> set[str]:
         events, self._events = self._events, set()
@@ -347,6 +354,15 @@ class PickLiftPlacePolicy(Policy):
                 continue
 
             obs = yield from self._move("hold", lifted, 1.0, obs, settle=self.hold_seconds)
+            if self.place_xy is not None:
+                # Put it down somewhere else: carry it at lift height to the
+                # place point's own waypoints, then lower and release there.
+                place = np.array([self.place_xy[0], self.place_xy[1], self.table_z])
+                above, standoff, at, lifted = self._grasp_waypoints(place)
+                obs = yield from self._move("carry", lifted, 1.0, obs, speed=self.approach_speed)
+                self.placed_xy = place[:2].copy()
+            else:
+                self.placed_xy = p[:2].copy()
             obs = yield from self._move("lower", at, 1.0, obs, speed=self.approach_speed)
             obs = yield from self._move("open", at, 0.0, obs, settle=2 * self.settle_seconds)
             obs = yield from self._move("back_out", standoff, 0.0, obs, speed=self.approach_speed)
@@ -611,6 +627,7 @@ class PickLiftPlacePolicy(Policy):
             speed or self.max_joint_speed,
             self.settle_seconds if settle is None else settle,
         )
+        self.phase = label
         self.log.event("move", phase=label, seconds=round(len(chunk) / self.hz, 1), gripper=gripper)
         obs = yield chunk
         # Wait for the arm to arrive before looking or grasping from here. On
