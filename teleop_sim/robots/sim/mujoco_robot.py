@@ -154,8 +154,15 @@ class MujocoRobot(Robot):
             c0, c1, *higher = self.model.eq_data[eq][:5]
             if j2 < 0 or abs(c1) < 1e-12 or any(abs(c) > 1e-12 for c in higher):
                 continue  # only linear two-joint couplings are handled
-            q1 = self.data.qpos[self.model.jnt_qposadr[j1]]
-            self.data.qpos[self.model.jnt_qposadr[j2]] = (q1 - c0) / c1
+            # MuJoCo's constraint is q[joint1] = c0 + c1 * q[joint2]. Whichever
+            # side is the driven gripper joint is the source; the other follows.
+            # (Kronos lists the follower as joint1, so copying joint1 -> joint2
+            # overwrote the driven finger and every reset started at its CAD pose.)
+            a1, a2 = self.model.jnt_qposadr[j1], self.model.jnt_qposadr[j2]
+            if j2 == self._gripper_jid:
+                self.data.qpos[a1] = c0 + c1 * self.data.qpos[a2]
+            else:
+                self.data.qpos[a2] = (self.data.qpos[a1] - c0) / c1
 
     def _check_sensing(self) -> None:
         """Refuse to pretend to sense things this simulation cannot.

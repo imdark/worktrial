@@ -1,0 +1,32 @@
+# gem13's right-arm cell, made to look like the rig's wrist camera view.
+# Measured from the rig's cameras (teleop_sim/envs/yam_assets.py, gem13 cell):
+#   - table far edge 0.89 m out: the edge's row in the rest-pose and level-check
+#     wrist images, with the gem13-calibrated camera, agree within 2 cm
+#     (nominal camera: 6 cm apart);
+#   - frosted cup where the rig last put it, black cup in front of the left arm;
+#   - butcher-block top, dark curtains, warm light.
+# The overhead 'top' camera is glasses_table's; the real one is not measured yet.
+#
+# On hardware the same description still applies to the fixed parts of the
+# cell: the overhead camera and the workspace envelope belong to the table the
+# arm is bolted to, not to the arm.
+
+name: gem13_cell
+version: "1"
+mjcf_path: ../../assets/scenes/gem13_cell/scene.xml
+
+# Where the arm's base sits in the cell: xyz + wxyz quaternion.
+arm_mount: [0, 0, 0, 1, 0, 0, 0]
+
+cameras:
+  - name: top
+    mount: world
+    pose: [0.22, 0.0, 0.72, 0.701027, 0.092527, -0.092527, -0.701027]
+    fovy_deg: 55.0
+    resolution: [640, 480]
+
+# Safety envelope for the grasp point, enforced by the watchdog once autonomous
+# operation begins.
+workspace:
+  lower: [0.05, -0.5, 0.005]
+  upper: [0.7, 0.5, 0.7]

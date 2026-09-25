@@ -1,0 +1,37 @@
+# Kronos as fitted to gem13's right arm: the nominal description (kronos.yaml)
+# with what the rig measured on 2026-09-24. Used to make the simulation behave
+# like the rig; the planner can keep the nominal model (policy planning_spec),
+# which is exactly the mismatch the real runs had.
+#
+#   mount       2 deg further nose-down than nominal. Level check: with the joints
+#               at a level pose (<0.1 deg error) the wrist camera saw the cup
+#               15 px high, and the operator saw the gripper nose-down.
+#   open_pos    -0.175 rad (-10 deg), 10 deg wider than the CAD pose: a 56.8 deg
+#               swing to closed. Fitted by rendering the wrist camera at the joints
+#               of four real images and maximising the gripper-outline overlap
+#               (IoU 0.36 at nominal open -> 0.64); agrees with the rig's DXL
+#               calibration, 663 ticks = ~58 deg. Nominal kronos.yaml opens 28 deg.
+#               The assembler widens the finger joints' range to allow it.
+#   wrist fovy  62.8 deg from the real D405 (fy 393.4 px at 480 rows).
+
+name: kronos_gem13
+version: "1"
+mjcf_path: ../../../assets/end_effectors/kronos/kronos.xml
+root_body: kronos
+
+mount: [0, 0, 0, 0.999848, 0.017452, 0.0, 0.0]
+ee_site: kronos_grasp
+
+gripper:
+  joint: kronos_finger_left
+  actuator: kronos_grip
+  open_pos: -0.175
+  closed_pos: 0.816500
+  deadband: 0.02
+
+cameras:
+  - name: wrist
+    mount: kronos_camera
+    pose: [0.0, 0.0, -0.0115, 1.0, 0.0, 0.0, 0.0]
+    fovy_deg: 62.8
+    resolution: [640, 480]

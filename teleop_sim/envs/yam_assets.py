@@ -414,23 +414,25 @@ DEFAULT_GLASSES = (
 class TaperedCup:
     """A tapered plastic cup, narrow at the bottom: gem13's frosted test cup.
 
-    Dimensions estimated from gem13's wrist camera on 2026-09-24 (known camera
-    pose and intrinsics; pixel widths at base and rim): ~57 mm across the base,
-    ~105 mm across the rim, ~110 mm tall. Measure the real one and correct
-    these. Only its bottom ~25 mm is narrower than Kronos opens (~76 mm), so a
-    side grasp has to go low; lifted, the wider part above the pads wedges in.
+    First estimated from wrist-camera pixel widths (~57 mm base, ~105 mm rim),
+    then corrected against the jaws, which measure what they grip: on gem13 the
+    Kronos stopped 13-15 deg short of closed at both 50 mm and 80 mm up, which
+    in this model's pad geometry (with the ~8 deg the soft contacts squeeze
+    past first touch) means ~64-68 mm there. That assumes the real fingers swing
+    1:1 with the servo (663 ticks, ~58 deg). Measure the cup to settle it.
     """
 
     name: str
     pos: tuple[float, float]
-    base_radius: float = 0.0285
-    rim_radius: float = 0.0525
+    base_radius: float = 0.029
+    rim_radius: float = 0.042
     height: float = 0.110
     wall: float = 0.0015
     base: float = 0.002
     segments: int = 24
     density: float = 900.0  # polypropylene
-    friction: tuple[float, float, float] = (1.0, 0.01, 0.001)
+    # Torsional 0.02 with condim 4: a soft pad grips over an area, not a point.
+    friction: tuple[float, float, float] = (1.0, 0.02, 0.001)
     rgba: tuple[float, float, float, float] = (0.95, 0.80, 0.74, 0.7)
 
     def radius_at(self, z: float) -> float:
@@ -441,7 +443,7 @@ class TaperedCup:
         i, j = indent, indent + "  "
         rgba = " ".join(f"{c:g}" for c in self.rgba)
         fr = " ".join(f"{c:g}" for c in self.friction)
-        contact = f'friction="{fr}" solimp="0.95 0.99 0.001" solref="0.004 1"'
+        contact = f'friction="{fr}" condim="4" solimp="0.95 0.99 0.001" solref="0.004 1"'
         x, y = self.pos
         rise = self.height - self.base
         # Walls lean out by the taper angle: rotate each box about its own
@@ -506,3 +508,120 @@ def build_glasses(glasses: tuple[DrinkingGlass, ...] = DEFAULT_GLASSES) -> str:
         + bodies
         + "  </worldbody>\n</mujoco>\n"
     )
+
+
+# ------------------------------------------------------------------ gem13 cell
+
+#: Where things are in gem13's right-arm base frame, measured from its cameras
+#: on 2026-09-24/25 (see teleop_sim/scenes/gem13_cell.yaml for how).
+GEM13_TABLE_FAR_X = 0.89  # far edge: rest + level-check wrist images agree within 2 cm
+GEM13_TABLE_NEAR_X = -0.12
+GEM13_TABLE_HALF_Y = 0.75
+GEM13_CUPS = (
+    TaperedCup(name="cup", pos=(0.552, -0.03), rgba=(0.93, 0.80, 0.76, 0.55)),
+    # Opaque black cup in front of the left arm: a sliver at the left edge of the
+    # right wrist camera's survey views, which is where Claude found it.
+    TaperedCup(name="black_cup", pos=(0.47, 0.52), base_radius=0.032, rim_radius=0.040,
+               rgba=(0.05, 0.05, 0.06, 1.0)),
+)
+
+
+def wood_texture_png(px_per_m: int = 512, seed: int = 7) -> bytes:
+    """Light butcher-block top: ~38 mm strips of varied tone, staggered joints,
+    fine grain. Deterministic, so the generated-assets test can regenerate it."""
+    rng = np.random.default_rng(seed)
+    n = px_per_m
+    img = np.zeros((n, n, 3), np.float64)
+    # Albedo chosen so the rendered top matches the rig's wrist images,
+    # RGB ~(0.58, 0.42, 0.32) under this cell's lights.
+    base = np.array([0.64, 0.48, 0.40])
+    strip = max(1, int(0.038 * n))
+    ys = np.arange(n)[:, None]
+    xs = np.arange(n)[None, :]
+    for s0 in range(0, n, strip):
+        x = 0
+        while x < n:
+            length = int(rng.uniform(0.18, 0.45) * n)
+            tone = base * rng.uniform(0.86, 1.10) + rng.normal(0, 0.015, 3)
+            img[s0:s0 + strip, x:x + length] = tone
+            x += length
+            if x < n:
+                img[s0:s0 + strip, x:x + 2] *= 0.93  # end joint
+                x += 2
+        img[s0:s0 + 1, :] *= 0.92  # glue line between strips
+    grain = 0.035 * np.sin(xs * 0.9 / n * 60 + 6 * np.sin(ys * 0.07)) + rng.normal(0, 0.012, (n, n))
+    img *= (1 + grain)[:, :, None]
+    # Strips run across the arm's view (along world y), as on the real table.
+    rgb = np.ascontiguousarray((np.clip(img, 0, 1) * 255).astype(np.uint8).transpose(1, 0, 2))
+
+    import struct
+    import zlib
+
+    raw = b"".join(b"\x00" + rgb[y].tobytes() for y in range(n))
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(
+            ">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", n, n, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b""))
+
+
+def build_gem13_cups(cups: tuple[TaperedCup, ...] = GEM13_CUPS) -> str:
+    bodies = "".join(cup.mjcf() for cup in cups)
+    return (GENERATED_HEADER + '<mujoco model="gem13_cups">\n  <worldbody>\n' + bodies
+            + "  </worldbody>\n</mujoco>\n")
+
+
+def build_gem13_cell() -> str:
+    """gem13's right-arm cell: finite wood table, dark curtains, warm light.
+
+    Physics options match glasses_table (the assembler requires the arm's), and
+    the overhead camera keeps glasses_table's 'top' pose so configs that name it
+    still work; the real overhead camera's pose is not yet measured.
+    """
+    far, near, hy = GEM13_TABLE_FAR_X, GEM13_TABLE_NEAR_X, GEM13_TABLE_HALF_Y
+    cx, hx = (far + near) / 2, (far - near) / 2
+    nc = 'contype="0" conaffinity="0"'
+    top_xyaxes = "0.000000 -1.000000 0.000000 0.965755 0.000000 0.259457"
+    return GENERATED_HEADER + f"""<!-- gem13's right-arm cell, built to look like the rig's wrist
+     camera view: the table's far edge where the real one is, a butcher-block
+     top, dark curtains behind and to the sides, warm light, and the two cups. -->
+<mujoco model="gem13_cell">
+  <compiler angle="radian"/>
+  <include file="cups.xml"/>
+  <option timestep="0.0016666666666666668" integrator="implicitfast"
+          cone="elliptic" impratio="10"/>
+  <visual>
+    <global offwidth="1280" offheight="960"/>
+    <quality shadowsize="4096"/>
+    <headlight ambient="0.42 0.40 0.38" diffuse="0.22 0.21 0.20" specular="0 0 0"/>
+  </visual>
+  <asset>
+    <texture name="skybox" type="skybox" builtin="flat" rgb1="0.04 0.04 0.045"
+             rgb2="0.04 0.04 0.045" width="64" height="384"/>
+    <texture name="wood_tex" type="2d" file="wood.png"/>
+    <material name="wood" texture="wood_tex" texuniform="true" texrepeat="2 2"
+              reflectance="0" specular="0.08" shininess="0.15"/>
+    <material name="curtain" rgba="0.055 0.055 0.06 1" specular="0" shininess="0"/>
+    <material name="floor" rgba="0.10 0.10 0.11 1" specular="0"/>
+  </asset>
+  <worldbody>
+    <light name="key" pos="0.45 0.1 1.6" dir="0 0 -1" diffuse="0.42 0.39 0.35"
+           specular="0.03 0.03 0.03" castshadow="true"/>
+    <light name="fill" pos="-0.2 -0.6 1.1" dir="0.3 0.5 -0.8" diffuse="0.22 0.20 0.18"
+           specular="0 0 0" castshadow="false"/>
+    <!-- Top at z = 0 (the arm base's plane); ends at the measured far edge. -->
+    <geom name="tabletop" type="box" size="{hx:.3f} {hy:.3f} 0.02" pos="{cx:.3f} 0 -0.02"
+          material="wood" friction="1.0 0.01 0.001"/>
+    <geom name="floor" type="plane" size="3 3 0.05" pos="0 0 -0.76" material="floor" {nc}/>
+    <geom name="curtain_back" type="box" size="0.01 1.6 0.9" pos="{far + 0.45:.3f} 0 0.1"
+          material="curtain" {nc}/>
+    <geom name="curtain_left" type="box" size="1.2 0.01 0.9"
+          pos="{cx:.3f} {hy + 0.35:.3f} 0.1" material="curtain" {nc}/>
+    <geom name="curtain_right" type="box" size="1.2 0.01 0.9"
+          pos="{cx:.3f} {-hy - 0.35:.3f} 0.1" material="curtain" {nc}/>
+    <camera name="top" pos="0.22 0 0.72" xyaxes="{top_xyaxes}" fovy="55"/>
+  </worldbody>
+</mujoco>
+"""

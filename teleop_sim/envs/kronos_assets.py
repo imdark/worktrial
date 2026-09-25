@@ -66,6 +66,12 @@ class KronosContact:
     pad_friction: tuple[float, float, float] = (1.2, 0.02, 0.002)
     shell_friction: tuple[float, float, float] = (0.6, 0.01, 0.001)
     pad_solref: tuple[float, float] = (0.02, 1.0)
+    #: 4 = sliding + torsional friction. With MuJoCo's default 3, the torsional
+    #: coefficient above is ignored and a pinched object pivots freely about
+    #: the line between the two pads: in sim the gem13 cup swung 40-60 deg in
+    #: the grasp and fell when placed, while on the rig the soft, textured pads
+    #: held it upright (2026-09-24).
+    pad_condim: int = 4
 
 
 #: Joint angle 0 is the STEP assembly's pose: fingers splayed ~39 deg, the widest
@@ -128,6 +134,7 @@ def build_kronos(
         density="0",
         friction=_vec(contact.pad_friction),
         solref=_vec(contact.pad_solref),
+        condim=str(contact.pad_condim),
     )
     d, _ = cls("finger")
     ET.SubElement(

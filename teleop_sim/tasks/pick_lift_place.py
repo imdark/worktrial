@@ -128,6 +128,7 @@ class PickLiftPlacePolicy(Policy):
         approach_only: bool = False,
         sag_compensation: bool = False,
         max_bias_deg: float = 8.6,
+        planning_spec: str | None = None,
     ) -> None:
         self.robot_spec = spec
         self.clock = clock
@@ -180,7 +181,11 @@ class PickLiftPlacePolicy(Policy):
         self.max_bias = math.radians(float(max_bias_deg))
         self.hz = spec.control_hz
 
-        self.kin = Kinematics(spec)
+        # The planner's model. Normally the robot's own spec; a sim-to-real
+        # experiment passes the nominal spec here while the simulated robot is
+        # built from a rig-calibrated one, reproducing the real model mismatch.
+        plan_spec = spec if planning_spec is None else RobotSpec.from_yaml(planning_spec)
+        self.kin = Kinematics(plan_spec)
         cameras = [wrist_camera] + ([overview_camera] if overview_camera else [])
         self.spec = PolicySpec(
             policy_id="pick_lift_place",

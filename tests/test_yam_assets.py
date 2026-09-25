@@ -6,6 +6,7 @@ import hashlib
 import importlib.util
 import xml.etree.ElementTree as ET
 
+import numpy as np
 import pytest
 
 from teleop_sim.envs.yam_assets import (
@@ -45,9 +46,33 @@ def test_upstream_is_byte_for_byte_what_was_vendored():
     assert actual == expected
 
 
+def _png_pixels(data: bytes):
+    """Decode the generator's own PNGs: 8-bit RGB, one IDAT, filter type 0 rows."""
+    import struct
+    import zlib
+
+    width, height = struct.unpack(">II", data[16:24])
+    start = data.index(b"IDAT") + 4
+    length = struct.unpack(">I", data[start - 8:start - 4])[0]
+    raw = zlib.decompress(data[start:start + length])
+    rows = np.frombuffer(raw, np.uint8).reshape(height, 1 + width * 3)
+    assert (rows[:, 0] == 0).all(), "unexpected PNG row filter"
+    return rows[:, 1:].reshape(height, width, 3)
+
+
 @pytest.mark.parametrize("path", list(_build_script().outputs()), ids=lambda p: p.name)
 def test_generated_files_are_current(path):
     expected = _build_script().outputs()[path]
+    if path.suffix == ".png":
+        # A procedural texture: float maths may round one level differently on
+        # another machine, so compare pixels, not bytes.
+        on_disk, fresh = _png_pixels(path.read_bytes()), _png_pixels(expected)
+        assert on_disk.shape == fresh.shape
+        assert np.abs(on_disk.astype(int) - fresh.astype(int)).max() <= 1, (
+            f"{path.name} differs from the generator's output -- run "
+            "`python scripts/build_yam_assets.py`"
+        )
+        return
     if isinstance(expected, bytes):
         assert path.read_bytes() == expected, (
             f"{path.name} differs from the generator's output -- run "

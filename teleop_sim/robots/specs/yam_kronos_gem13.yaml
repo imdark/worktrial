@@ -1,0 +1,4 @@
+# YAM + Kronos as measured on gem13 (see end_effectors/kronos_gem13.yaml).
+name: yam_kronos_gem13
+arm: ../arms/yam.yaml
+end_effector: ../end_effectors/kronos_gem13.yaml

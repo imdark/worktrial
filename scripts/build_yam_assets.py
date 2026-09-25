@@ -14,9 +14,12 @@ from teleop_sim.envs.yam_assets import (
     build_arm,
     build_cup,
     build_cup_scene,
+    build_gem13_cell,
+    build_gem13_cups,
     build_glasses,
     build_linear_gripper,
     split_fused_mesh,
+    wood_texture_png,
 )
 
 ASSETS = Path(__file__).resolve().parent.parent / "assets"
@@ -34,6 +37,9 @@ def outputs() -> dict[Path, str | bytes]:
         ASSETS / "end_effectors" / "yam_linear" / "meshes" / "stock_frame.stl": frame,
         ASSETS / "scenes" / "glasses_table" / "glasses.xml": build_glasses(),
         ASSETS / "scenes" / "cup_table" / "cup.xml": build_cup(),
+        ASSETS / "scenes" / "gem13_cell" / "scene.xml": build_gem13_cell(),
+        ASSETS / "scenes" / "gem13_cell" / "cups.xml": build_gem13_cups(),
+        ASSETS / "scenes" / "gem13_cell" / "wood.png": wood_texture_png(),
         ASSETS / "scenes" / "cup_table" / "scene.xml": build_cup_scene(
             (ASSETS / "scenes" / "glasses_table" / "scene.xml").read_text()
         ),

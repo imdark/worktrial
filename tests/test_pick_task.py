@@ -98,6 +98,88 @@ def test_the_task_picks_lifts_and_puts_back_a_glass(target, neighbour):
     assert moved < 0.002, "the other glass is untouched"
 
 
+@requires_kronos
+def test_the_gem13_calibration_differs_from_nominal_only_where_measured():
+    """The rig-calibrated Kronos: 2 deg nose-down tool, the real D405's field of
+    view, wider jaw travel. The planner can keep the nominal model."""
+    import math
+
+    from teleop_sim.core.clock import WallClock
+    from teleop_sim.core.spec import RobotSpec
+    from teleop_sim.robots.kinematics import Kinematics
+    from teleop_sim.tasks.pick_lift_place import PickLiftPlacePolicy
+
+    specs = PACKAGE / "robots" / "specs"
+    pitch = {}
+    for name in ("yam_kronos", "yam_kronos_gem13"):
+        spec = RobotSpec.from_yaml(specs / f"{name}.yaml")
+        kin = Kinematics(spec)
+        axis = kin.frame(spec.home_joints(), "site", spec.ee_site)[1][:, 2]
+        pitch[name] = math.degrees(math.asin(axis[2]))
+        fovy = kin.model.cam_fovy[kin._id("camera", "wrist")]
+        assert fovy == pytest.approx(spec.camera("wrist").fovy_deg)
+    assert pitch["yam_kronos"] == pytest.approx(0.0, abs=0.05)
+    assert pitch["yam_kronos_gem13"] == pytest.approx(-2.0, abs=0.05)
+
+    gem13 = RobotSpec.from_yaml(specs / "yam_kronos_gem13.yaml")
+    policy = PickLiftPlacePolicy(gem13, WallClock(), vision={"type": "oracle"},
+                                 planning_spec=str(specs / "yam_kronos.yaml"))
+    assert policy.kin.spec.name == "yam_kronos"
+
+
+@requires_kronos
+def test_reset_opens_the_kronos_to_its_open_position():
+    """The finger coupling lists the follower first; syncing must not overwrite
+    the driven finger (it used to reset Kronos to its CAD pose, 0 rad)."""
+    from teleop_sim.core.clock import WallClock
+    from teleop_sim.core.parts import SceneSpec
+    from teleop_sim.core.spec import RobotSpec
+    from teleop_sim.robots.sim.mujoco_robot import MujocoRobot
+
+    for name in ("yam_kronos", "yam_kronos_gem13"):
+        spec = RobotSpec.from_yaml(PACKAGE / "robots" / "specs" / f"{name}.yaml").with_scene(
+            SceneSpec.from_yaml(PACKAGE / "scenes" / "glasses_table.yaml"))
+        robot = MujocoRobot(spec, WallClock(), render_cameras=[])
+        m, d = robot.model, robot.data
+        left = d.qpos[m.jnt_qposadr[m.joint("kronos_finger_left").id]]
+        right = d.qpos[m.jnt_qposadr[m.joint("kronos_finger_right").id]]
+        assert left == pytest.approx(spec.gripper.open_pos, abs=1e-9), name
+        assert right == pytest.approx(left, abs=1e-9), name
+        assert robot.get_observation().gripper == pytest.approx(0.0, abs=1e-6)
+
+
+@requires_kronos
+def test_a_description_can_open_the_gripper_wider_than_its_cad_pose():
+    from teleop_sim.core.spec import RobotSpec
+    from teleop_sim.robots.sim.assembly import build_model
+
+    spec = RobotSpec.from_yaml(PACKAGE / "robots" / "specs" / "yam_kronos_gem13.yaml")
+    model = build_model(spec)
+    for finger in ("kronos_finger_left", "kronos_finger_right"):
+        lo, hi = model.jnt_range[model.joint(finger).id]
+        assert lo <= spec.gripper.open_pos and hi >= spec.gripper.closed_pos
+    lo, hi = model.actuator_ctrlrange[model.actuator("kronos_grip").id]
+    assert lo <= spec.gripper.open_pos
+
+
+@requires_kronos
+def test_the_gem13_cell_has_the_measured_table_and_both_cups():
+    from teleop_sim.core.parts import SceneSpec
+    from teleop_sim.core.spec import RobotSpec
+    from teleop_sim.envs.yam_assets import GEM13_TABLE_FAR_X
+    from teleop_sim.robots.sim.assembly import build_model
+
+    spec = RobotSpec.from_yaml(PACKAGE / "robots" / "specs" / "yam_kronos_gem13.yaml").with_scene(
+        SceneSpec.from_yaml(PACKAGE / "scenes" / "gem13_cell.yaml"))
+    model = build_model(spec)
+    table = model.geom("tabletop").id
+    far = model.geom_pos[table][0] + model.geom_size[table][0]
+    assert far == pytest.approx(GEM13_TABLE_FAR_X, abs=1e-3)
+    assert model.geom_pos[table][2] + model.geom_size[table][2] == pytest.approx(0.0, abs=1e-6)
+    for body in ("cup", "black_cup"):
+        assert model.body(body).id >= 0
+
+
 class NeverFinds(Vision):
     def plan(self, views, instruction):
         return TargetPlan(description="a glass")

@@ -94,6 +94,31 @@ def _bare_world(arm):
     return root
 
 
+def _widen_gripper_travel(end_effector, gripper) -> None:
+    """Let the description's open/closed positions lie outside the MJCF's joint range.
+
+    A rig can open wider than the pose its CAD was exported in (gem13's Kronos
+    swings ~58 deg, its CAD range 47 deg). The driven joint, every joint sharing
+    its range (a mirrored finger), and the actuator's ctrlrange are widened to
+    include both positions; nothing is ever narrowed.
+    """
+    driven = end_effector.joint(gripper.joint)
+    if driven is None:
+        return
+    lo, hi = (float(v) for v in driven.range)
+    want_lo = min(lo, gripper.open_pos, gripper.closed_pos)
+    want_hi = max(hi, gripper.open_pos, gripper.closed_pos)
+    if (want_lo, want_hi) == (lo, hi):
+        return
+    for joint in end_effector.joints:
+        if tuple(float(v) for v in joint.range) == (lo, hi):
+            joint.range = [want_lo, want_hi]
+    actuator = end_effector.actuator(gripper.actuator_name)
+    if actuator is not None:
+        clo, chi = (float(v) for v in actuator.ctrlrange)
+        actuator.ctrlrange = [min(clo, want_lo), max(chi, want_hi)]
+
+
 def build_mjspec(spec: RobotSpec):
     """The robot (and its scene, if any) as an uncompiled MjSpec."""
     mujoco = _mujoco()
@@ -108,6 +133,14 @@ def build_mjspec(spec: RobotSpec):
 
     arm = _load(parts.arm.mjcf_path, arm_label)
     end_effector = _load(parts.end_effector.mjcf_path, ee_label)
+
+    # The description is the source of truth for its cameras' field of view,
+    # so a rig-calibrated variant can carry a measured fovy without a new MJCF.
+    for camera in parts.end_effector.cameras:
+        found = end_effector.camera(camera.name)
+        if found is not None:
+            found.fovy = camera.fovy_deg
+    _widen_gripper_travel(end_effector, parts.end_effector.gripper)
 
     mount = parts.end_effector.mount
     flange = _body(arm, parts.arm.flange, arm_label)
