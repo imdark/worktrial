@@ -32,6 +32,10 @@ import numpy as np
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from teleop_sim.control.safety.vision_hazard import (  # noqa: E402
+    task_context,
+    with_hazard_monitor,
+)
 from teleop_sim.core.config import RunConfig, build_system  # noqa: E402
 from teleop_sim.runlog import RunLog  # noqa: E402
 from teleop_sim.telemetry import TelemetryRecorder  # noqa: E402
@@ -76,6 +80,11 @@ def main() -> int:
     ap.add_argument("--max-failures", type=int, default=2)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out", type=Path, default=None)
+    ap.add_argument(
+        "--hazard-monitor",
+        action="store_true",
+        help="opt in to the vision safety loop (configs/safety/vision_hazard.yaml)",
+    )
     args = ap.parse_args()
 
     config = RunConfig.from_yaml(args.config)
@@ -83,6 +92,8 @@ def main() -> int:
         config.robot["host"] = args.host
     if args.camera_port:
         config.robot["camera_port"] = args.camera_port
+    if args.hazard_monitor:
+        config.safety = with_hazard_monitor(config.safety)
     system = build_system(config)
     policy = system.source.policy
     batch = args.out or ROOT / "runs" / f"collect_{time.strftime('%Y%m%d-%H%M%S')}"
@@ -100,6 +111,10 @@ def main() -> int:
             policy.place_xy = place
             log = RunLog(ep)
             policy.bind(robot=system.robot, run_log=log, gate=None)
+            if hasattr(system.safety, "bind"):
+                system.safety.bind(
+                    run_log=log, robot=system.robot, context=task_context(policy.instruction)
+                )
             system.loop.recorder = TelemetryRecorder(
                 ep,
                 phase_of=lambda: policy.phase,

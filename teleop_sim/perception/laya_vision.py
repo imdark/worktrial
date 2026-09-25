@@ -56,6 +56,23 @@ MODEL_NAME = "laya-vision"
 VERIFY_QUESTION = "Is the gripper holding a cup between its closed fingers?"
 
 
+def post_predict(
+    endpoint: str, image_b64: str, questions: dict[str, Any], timeout_s: float
+) -> dict[str, Any]:
+    """One request to scripts/laya_server.py; raises VisionError if it fails."""
+    body = json.dumps({"image": image_b64, "questions": questions}).encode()
+    request = urllib.request.Request(
+        f"{endpoint.rstrip('/')}/predict", data=body, headers={"Content-Type": "application/json"}
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_s) as response:
+            return json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        raise VisionError(f"server error {exc.code}: {exc.read()[:200]!r}") from exc
+    except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+        raise VisionError(f"laya server unreachable at {endpoint}: {exc}") from exc
+
+
 class LayaVision(Vision):
     def __init__(
         self,
@@ -130,17 +147,10 @@ class LayaVision(Vision):
             "prompt": json.dumps(questions),
         }
         started = time.monotonic()
-        body = json.dumps({"image": data, "questions": questions}).encode()
-        request = urllib.request.Request(
-            f"{self.endpoint}/predict", data=body, headers={"Content-Type": "application/json"}
-        )
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout_s) as response:
-                answer = json.loads(response.read())
-        except urllib.error.HTTPError as exc:
-            self._fail(record, started, f"server error {exc.code}: {exc.read()[:200]!r}")
-        except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
-            self._fail(record, started, f"laya server unreachable at {self.endpoint}: {exc}")
+            answer = post_predict(self.endpoint, data, questions, self.timeout_s)
+        except VisionError as exc:
+            self._fail(record, started, str(exc))
         record["latency_s"] = round(time.monotonic() - started, 3)
         record["server_latency_s"] = answer.get("server_latency_s")
         record["revision"] = answer.get("provenance", {}).get("checkpoint", {}).get("revision")

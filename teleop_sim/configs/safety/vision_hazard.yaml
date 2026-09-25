@@ -1,0 +1,23 @@
+# Opt-in vision safety loop (teleop_sim/control/safety/vision_hazard.py).
+# Off by default; run_pick.py / collect_real_picks.py --hazard-monitor wrap the
+# run's own safety monitor in this one (it becomes `inner`).
+#
+# laya-vision asks, a few times a second, whether a person's hand or arm is in
+# the wrist or overhead view. Three confident answers in a row (~1 s) pause the
+# arm -- nothing is commanded, the rig holds its pose -- and Claude looks at the
+# alarm frame and fresh frames: resume, wait (hold and look again every
+# wait_s), or abort (safe stop, episode over). No answer from Claude, or still
+# unclear after max_hold_s, aborts. Needs scripts/laya_server.py running (the
+# run refuses to start without it). A supplement to the e-stop, not a
+# replacement.
+type: vision_hazard
+endpoint: http://127.0.0.1:8765
+review:
+  type: claude
+  fast_model: claude-sonnet-5     # decides; an unsure "resume" goes to Opus
+  smart_model: claude-opus-5-5
+  escalate_below: 0.8
+  resume_confidence: 0.7          # below this a "resume" is treated as "wait"
+  wait_s: 3.0
+  max_hold_s: 60.0                # under link_grace_s, so the bridge waits it out
+  max_reviews: 6                  # per episode; more alarms than that aborts

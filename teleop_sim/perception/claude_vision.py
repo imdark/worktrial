@@ -30,6 +30,7 @@ import numpy as np
 from teleop_sim.perception.camera import CameraModel
 from teleop_sim.perception.vision import (
     Detection,
+    HazardReview,
     Pixel,
     TargetPlan,
     Verdict,
@@ -73,6 +74,14 @@ PLAN_SCHEMA = _schema(
 VERIFY_SCHEMA = _schema(
     {
         "ok": {"type": "boolean"},
+        "confidence": {"type": "number"},
+        "reason": {"type": "string"},
+    }
+)
+HAZARD_SCHEMA = _schema(
+    {
+        "hazard": {"type": "boolean"},
+        "decision": {"type": "string", "enum": ["resume", "wait", "abort"]},
         "confidence": {"type": "number"},
         "reason": {"type": "string"},
     }
@@ -137,6 +146,25 @@ def _png(rgb: np.ndarray) -> bytes:
         + chunk(b"IDAT", zlib.compress(raw, 6))
         + chunk(b"IEND", b"")
     )
+
+
+HAZARD_SYSTEM = (
+    "You are the safety reviewer of a robot arm working at a table. A fast on-board detector "
+    "has paused the arm because it thinks something unexpected is in the arm's path or "
+    "around it. The arm is holding still. Look at the images and decide:\n"
+    "- resume: nothing is in the arm's path or within reach of it except what the task "
+    "expects (the object it is handling, other objects already on the table, the robot's "
+    "own gripper, cables and mounts). The alarm was false, or the hazard has gone.\n"
+    "- wait: a person, a hand, or an object that should not be there is in or near the "
+    "arm's path, but it is likely to move away. The arm keeps holding and you will be shown "
+    "fresh images again.\n"
+    "- abort: the hazard will not clear by itself, or the scene has changed so the task "
+    "cannot safely continue (something placed in the path, the object knocked over, "
+    "something wrong with the arm).\n"
+    "Be conservative: a person's body part anywhere near the arm is a hazard. Choose "
+    "resume only when the images clearly show the way is clear; confidence is how sure "
+    "you are of your decision, 0 to 1."
+)
 
 
 class ClaudeVision(Vision):
@@ -208,7 +236,32 @@ class ClaudeVision(Vision):
             verdict = self._verify(self.smart_model, self.smart_effort, views, question)
         return verdict
 
+    def review_hazard(self, images: dict[str, np.ndarray], context: str) -> HazardReview:
+        """Decide what a paused arm should do. The fast model answers; a "resume" it is
+        not sure of (below escalate_below) goes to the smart model, whose word stands."""
+        review = self._review_hazard(self.fast_model, self.fast_effort, images, context)
+        if review.decision == "resume" and review.confidence < self.escalate_below:
+            self.run_log.event(
+                "escalate", question="hazard", confidence=review.confidence, to=self.smart_model
+            )
+            review = self._review_hazard(self.smart_model, self.smart_effort, images, context)
+        return review
+
     # ------------------------------------------------------------ internals
+
+    def _review_hazard(
+        self, model: str, effort: str, images: dict[str, np.ndarray], context: str
+    ) -> HazardReview:
+        content = self._images(images, "hazard")
+        content.append({"type": "text", "text": context})
+        data = self._call(model, effort, HAZARD_SYSTEM, content, HAZARD_SCHEMA, purpose="hazard")
+        return HazardReview(
+            decision=str(data["decision"]),
+            hazard=bool(data["hazard"]),
+            confidence=float(data["confidence"]),
+            reason=data["reason"],
+            model=model,
+        )
 
     def _locate(self, model: str, effort: str, image: np.ndarray, target: str) -> Detection:
         h, w = image.shape[:2]

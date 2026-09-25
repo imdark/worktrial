@@ -84,6 +84,7 @@ source:
 success: {type: never}
 reset: {type: none}
 
+# The vision safety loop is opt-in: --hazard-monitor (configs/safety/vision_hazard.yaml).
 safety:
   type: sim_watchdog        # step/time bound; hardware limits live in robots_realtime
   max_steps: 30000

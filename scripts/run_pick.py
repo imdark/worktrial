@@ -26,6 +26,10 @@ import numpy as np
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from teleop_sim.control.safety.vision_hazard import (  # noqa: E402
+    task_context,
+    with_hazard_monitor,
+)
 from teleop_sim.core.clock import ManualClock, WallClock  # noqa: E402
 from teleop_sim.core.config import RunConfig, build_system  # noqa: E402
 from teleop_sim.core.protocols import Recorder  # noqa: E402
@@ -157,6 +161,12 @@ def main() -> int:
     )
     ap.add_argument("--video", type=Path, help="sim: write the overview camera to this mp4")
     ap.add_argument("--runs-dir", default=str(ROOT / "runs"))
+    ap.add_argument(
+        "--hazard-monitor",
+        action="store_true",
+        help="opt in to the vision safety loop (configs/safety/vision_hazard.yaml); "
+        "needs scripts/laya_server.py running",
+    )
     args = ap.parse_args()
 
     config = RunConfig.from_yaml(args.config)
@@ -187,6 +197,8 @@ def main() -> int:
     if args.ports:
         config.robot["pub_port"], config.robot["sub_port"] = args.ports
 
+    if args.hazard_monitor:
+        config.safety = with_hazard_monitor(config.safety)
     is_sim = config.robot.get("type") == "mujoco"
     log = RunLog.timestamped(
         args.runs_dir, "probe" if args.probe else ("sim" if is_sim else "real")
@@ -201,6 +213,9 @@ def main() -> int:
     confirm = (not is_sim) if args.confirm is None else args.confirm
     policy = system.source.policy
     policy.bind(robot=system.robot, run_log=log, gate=make_gate() if confirm else None)
+    if hasattr(system.safety, "bind"):
+        context = task_context(policy.instruction)
+        system.safety.bind(run_log=log, robot=system.robot, context=context)
     if args.video:
         camera = policy.overview_camera or policy.wrist_camera
         system.loop.recorder = VideoRecorder(args.video, camera, system.spec.control_hz)

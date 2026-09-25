@@ -58,6 +58,17 @@ class Verdict:
     model: str = ""
 
 
+@dataclass(frozen=True)
+class HazardReview:
+    """A second opinion on a safety alarm: go on, hold still, or give up."""
+
+    decision: str  # "resume" | "wait" | "abort"
+    hazard: bool
+    confidence: float
+    reason: str = ""
+    model: str = ""
+
+
 @dataclass
 class Views:
     """The images a question is asked about, keyed by camera name."""

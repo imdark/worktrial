@@ -16,6 +16,7 @@ from __future__ import annotations
 from teleop_sim.control import sources as _sources  # noqa: F401
 from teleop_sim.control.safety import hardware_safety as _hardware_safety  # noqa: F401
 from teleop_sim.control.safety import sim_watchdog as _sim_watchdog  # noqa: F401
+from teleop_sim.control.safety import vision_hazard as _vision_hazard  # noqa: F401
 from teleop_sim.core.registry import POLICIES, ROBOTS
 from teleop_sim.policies import constant as _constant  # noqa: F401
 from teleop_sim.reset import none as _reset_none  # noqa: F401
