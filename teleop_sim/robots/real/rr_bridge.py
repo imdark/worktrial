@@ -234,7 +234,12 @@ class RobotsRealtimeRobot(Robot):
             gripper=float(np.clip(1.0 - grip_rr, 0.0, 1.0)),
             ee_pose=self._ee_pose(q),
             timestamp=self.clock.now(),
-            extra={"intrinsics": intrinsics, "depth": depth, "gripper_rr": grip_rr},
+            extra={
+                "intrinsics": intrinsics,
+                "depth": depth,
+                "gripper_rr": grip_rr,
+                "motors": _motor_fields(state),
+            },
         )
 
     def _ee_pose(self, q: np.ndarray) -> np.ndarray | None:
@@ -281,3 +286,20 @@ class RobotsRealtimeRobot(Robot):
     def safe_stop(self) -> None:
         """Stop commanding. The RobotNode holds the last pose after 0.5 s of silence."""
         self._halted = True
+
+
+#: Raw motor readings the driver publishes beside positions, passed through
+#: untouched for telemetry. On gem13's Kronos gripper, ``gripper_eff`` is the sum
+#: of |present current| of its two XC330 servos (raw units, ~mA) and
+#: ``gripper_vel`` is servo velocity; ``joint_eff`` / ``joint_vel`` are the
+#: Damiao arm motors' torque and velocity. Not declared as spec sensing:
+#: they are unverified against a reference and nothing controls on them.
+MOTOR_FIELDS = ("gripper_eff", "gripper_vel", "joint_eff", "joint_vel")
+
+
+def _motor_fields(state: dict) -> dict[str, list[float]]:
+    out = {}
+    for key in MOTOR_FIELDS:
+        if state.get(key) is not None:
+            out[key] = [float(v) for v in np.asarray(state[key], dtype=np.float64).ravel()]
+    return out

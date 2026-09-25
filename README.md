@@ -418,6 +418,17 @@ a 20-step smoke fine-tune reached 0.885 / 0.884. That batch has **no hard
 negatives** (jaws closed on nothing), so a fine-tuned model may learn
 "closed jaws = held": collect deliberate misses before trusting its "no".
 
+#### Gripper current: a grasp check without a camera
+
+Real runs also record the rig's raw motor readings in `telemetry.jsonl`
+(`motors`): gripper current and velocity, and arm joint torques and velocities.
+On gem13's Kronos, a held cup reads **~300** (the servos' hold-current cap) and
+jaws closed on nothing read **0–1**. "Held iff current >= 150" matched the
+jaw-position labels on 99.4 % and 99.6 % of steps over two runs, including the
+closed-on-nothing case the laya dataset lacks. Data, plots and caveats:
+[`docs/experiments/2026-09-25-gripper-current/`](docs/experiments/2026-09-25-gripper-current/README.md);
+plot any real episode with `python scripts/plot_gripper_current.py runs/<batch>/ep01`.
+
 ### Optional: vision safety loop (opt-in, `--hazard-monitor`)
 
 Off unless asked for. With `--hazard-monitor` on `run_pick.py` or

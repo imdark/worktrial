@@ -1,0 +1,32 @@
+{
+  "episode": "runs/current_sample_20260925-153134/ep01",
+  "steps": 1758,
+  "seconds": 75.9,
+  "current_by_label": {
+    "held": {
+      "n": 523,
+      "median": 299.0,
+      "p10": 299.0,
+      "p90": 301.0
+    },
+    "not_held": {
+      "n": 1161,
+      "median": 30.0,
+      "p10": 18.0,
+      "p90": 35.0
+    },
+    "uncertain": {
+      "n": 74,
+      "median": 362.5,
+      "p10": 132.60000000000002,
+      "p90": 570.0
+    }
+  },
+  "threshold_rule": {
+    "rule": "held iff gripper current >= 150",
+    "n": 1684,
+    "agreement": 0.9964,
+    "held_recall": 1.0,
+    "not_held_recall": 0.9948
+  }
+}

@@ -3,7 +3,9 @@
 A Recorder the control loop calls every step. It writes, into a run directory:
 
     telemetry.jsonl   one line per control step: time, phase, joints, gripper
-                      (measured), commanded joints and gripper, action staleness
+                      (measured), commanded joints and gripper, action staleness,
+                      the step's label, and on the real rig raw motor readings
+                      (gripper current and velocity, arm torques)
     frames/*.jpg      camera frames at ``image_hz`` (wrist and overview)
     labels.jsonl      one line per saved wrist frame: is the object held?
 
@@ -98,6 +100,12 @@ class TelemetryRecorder(Recorder):
         }
         if obs.ee_pose is not None:
             line["ee_pose"] = np.round(obs.ee_pose, 5).tolist()
+        motors = obs.extra.get("motors") if obs.extra else None
+        if motors:  # real rig: gripper current / velocity, arm torques (rr_bridge)
+            line["motors"] = {k: [round(v, 4) for v in vals] for k, vals in motors.items()}
+        line["label"] = label_frame(
+            phase, float(action.gripper), float(obs.gripper), self.empty_above
+        )[0]
         if self._step % self.every == 0:
             import cv2
 
