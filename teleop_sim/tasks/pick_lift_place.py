@@ -129,6 +129,7 @@ class PickLiftPlacePolicy(Policy):
         sag_compensation: bool = False,
         max_bias_deg: float = 8.6,
         planning_spec: str | None = None,
+        fuse_views_above: float = 0.015,
     ) -> None:
         self.robot_spec = spec
         self.clock = clock
@@ -179,6 +180,8 @@ class PickLiftPlacePolicy(Policy):
         # Offset commands by the measured gravity sag (real arms; sim needs none).
         self.sag_compensation = bool(sag_compensation)
         self.max_bias = math.radians(float(max_bias_deg))
+        # Survey vs closer-view gap (m) above which the grasp uses their mean.
+        self.fuse_views_above = float(fuse_views_above)
         self.hz = spec.control_hz
 
         # The planner's model. Normally the robot's own spec; a sim-to-real
@@ -312,10 +315,7 @@ class PickLiftPlacePolicy(Policy):
                 obs = yield from self._move("refine", self._view_pose(p[:2], self.refine), 0.0, obs)
                 refined = self._locate(obs, target_desc, "refine")
                 if refined is not None:
-                    self.log.event(
-                        "refined", moved_mm=round(1000 * float(np.linalg.norm(refined - p)), 1)
-                    )
-                    p = refined
+                    p = self._combine_views(p, refined)
 
             if self.look_only:
                 self.log.event("look_only", table_xy=p[:2].round(4))
@@ -361,6 +361,26 @@ class PickLiftPlacePolicy(Policy):
 
     # ------------------------------------------------------------ perception
 
+    def _combine_views(self, survey: np.ndarray, closer: np.ndarray) -> np.ndarray:
+        """The grasp target from the survey and closer-view estimates.
+
+        Agreeing views: trust the closer one. Disagreeing views (more than
+        ``fuse_views_above``): neither is trustworthy alone, so take the mean.
+        On gem13 (2026-09-25, 13:04) the closer view put the cup 22-24 mm
+        nearer the arm than the survey in both attempts; grasping at the closer
+        estimate pushed the cup away twice, where the mean was ~12 mm short.
+        """
+        gap = float(np.linalg.norm(closer[:2] - survey[:2]))
+        fused = gap > self.fuse_views_above
+        target = (survey + closer) / 2 if fused else closer
+        self.log.event(
+            "refined",
+            moved_mm=round(1000 * gap, 1),
+            used="mean of both views" if fused else "closer view",
+            target_xy=target[:2].round(4),
+        )
+        return target
+
     def _grasp_held(self, obs: Observation, target: str = "") -> bool:
         """Is the glass held? The jaws answer first, the vision model second.
 
@@ -383,12 +403,23 @@ class PickLiftPlacePolicy(Policy):
             "fingers, seen from above, often looking down into its opening; other glasses "
             "standing on the table are not the one in question. Is a glass held between the "
             "fingers and lifted clear of the table?"
-            + (f" The object being picked is: {target} Any other object still on the table "
-               "is a different one." if target else ""),
+            + (
+                f" The object being picked is: {target} Any other object still on the table "
+                "is a different one."
+                if target
+                else ""
+            ),
         )
         held = verdict.ok or verdict.confidence < self.reject_confidence
-        self.log.event("verify", ok=held, jaw=round(jaw, 3), vision_ok=verdict.ok,
-                       confidence=verdict.confidence, reason=verdict.reason, model=verdict.model)
+        self.log.event(
+            "verify",
+            ok=held,
+            jaw=round(jaw, 3),
+            vision_ok=verdict.ok,
+            confidence=verdict.confidence,
+            reason=verdict.reason,
+            model=verdict.model,
+        )
         return held
 
     def _views(self, obs: Observation) -> Views:
@@ -599,7 +630,9 @@ class PickLiftPlacePolicy(Policy):
             planned = self.kin.frame(self._q_cmd, "site", self.robot_spec.ee_site)[0]
             actual = self.kin.frame(obs.joint_pos, "site", self.robot_spec.ee_site)[0]
             self.log.event(
-                "arrived", phase=label, waited_s=round(waited, 1),
+                "arrived",
+                phase=label,
+                waited_s=round(waited, 1),
                 error_deg=np.degrees(obs.joint_pos - self._q_cmd).round(1),
                 bias_deg=np.degrees(self._bias).round(1),
                 tip_error_mm=(1000 * (actual - planned)).round(0),

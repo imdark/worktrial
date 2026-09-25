@@ -122,8 +122,9 @@ def test_the_gem13_calibration_differs_from_nominal_only_where_measured():
     assert pitch["yam_kronos_gem13"] == pytest.approx(-2.0, abs=0.05)
 
     gem13 = RobotSpec.from_yaml(specs / "yam_kronos_gem13.yaml")
-    policy = PickLiftPlacePolicy(gem13, WallClock(), vision={"type": "oracle"},
-                                 planning_spec=str(specs / "yam_kronos.yaml"))
+    policy = PickLiftPlacePolicy(
+        gem13, WallClock(), vision={"type": "oracle"}, planning_spec=str(specs / "yam_kronos.yaml")
+    )
     assert policy.kin.spec.name == "yam_kronos"
 
 
@@ -138,7 +139,8 @@ def test_reset_opens_the_kronos_to_its_open_position():
 
     for name in ("yam_kronos", "yam_kronos_gem13"):
         spec = RobotSpec.from_yaml(PACKAGE / "robots" / "specs" / f"{name}.yaml").with_scene(
-            SceneSpec.from_yaml(PACKAGE / "scenes" / "glasses_table.yaml"))
+            SceneSpec.from_yaml(PACKAGE / "scenes" / "glasses_table.yaml")
+        )
         robot = MujocoRobot(spec, WallClock(), render_cameras=[])
         m, d = robot.model, robot.data
         left = d.qpos[m.jnt_qposadr[m.joint("kronos_finger_left").id]]
@@ -170,7 +172,8 @@ def test_the_gem13_cell_has_the_measured_table_and_both_cups():
     from teleop_sim.robots.sim.assembly import build_model
 
     spec = RobotSpec.from_yaml(PACKAGE / "robots" / "specs" / "yam_kronos_gem13.yaml").with_scene(
-        SceneSpec.from_yaml(PACKAGE / "scenes" / "gem13_cell.yaml"))
+        SceneSpec.from_yaml(PACKAGE / "scenes" / "gem13_cell.yaml")
+    )
     model = build_model(spec)
     table = model.geom("tabletop").id
     far = model.geom_pos[table][0] + model.geom_size[table][0]
@@ -178,6 +181,20 @@ def test_the_gem13_cell_has_the_measured_table_and_both_cups():
     assert model.geom_pos[table][2] + model.geom_size[table][2] == pytest.approx(0.0, abs=1e-6)
     for body in ("cup", "black_cup"):
         assert model.body(body).id >= 0
+
+
+def test_disagreeing_views_are_averaged_agreeing_ones_trust_the_closer_view():
+    from teleop_sim.core.clock import WallClock
+    from teleop_sim.core.spec import RobotSpec
+    from teleop_sim.tasks.pick_lift_place import PickLiftPlacePolicy
+
+    spec = RobotSpec.from_yaml(PACKAGE / "robots" / "specs" / "yam_kronos.yaml")
+    policy = PickLiftPlacePolicy(spec, WallClock(), vision={"type": "oracle"})
+    survey = np.array([0.512, -0.028, 0.0])
+    close = np.array([0.4881, -0.0273, 0.0])  # 13:04 attempt 1: 24 mm apart
+    np.testing.assert_allclose(policy._combine_views(survey, close), (survey + close) / 2)
+    near = np.array([0.506, -0.026, 0.0])  # 6 mm apart
+    np.testing.assert_allclose(policy._combine_views(survey, near), near)
 
 
 class NeverFinds(Vision):
