@@ -216,9 +216,20 @@ class PickLiftPlacePolicy(Policy):
         self.gate = gate
         self.vision = None
 
-    def _build_vision(self) -> Vision:
-        cfg = dict(self.vision_config)
+    def _build_vision(self, config: dict | None = None) -> Vision:
+        cfg = dict(self.vision_config if config is None else config)
         kind = cfg.pop("type", "claude")
+        if kind == "laya":
+            from teleop_sim.perception.laya_vision import LayaVision
+
+            fallback = cfg.pop("fallback", None)
+            if fallback is not None and fallback.get("type") == "laya":
+                raise ValueError("vision type 'laya' cannot fall back to itself")
+            return LayaVision(
+                fallback=None if fallback is None else self._build_vision(fallback),
+                run_log=self.log,
+                **cfg,
+            )
         if kind == "claude":
             from teleop_sim.perception.claude_vision import ClaudeVision
 
@@ -229,7 +240,7 @@ class PickLiftPlacePolicy(Policy):
             if self._robot is None or not hasattr(self._robot, "model"):
                 raise ValueError("vision type 'oracle' needs a simulated robot bound with bind()")
             return OracleVision(self._robot, height=self.glass_height, **cfg)
-        raise ValueError(f"unknown vision type {kind!r}; expected 'claude' or 'oracle'")
+        raise ValueError(f"unknown vision type {kind!r}; expected 'claude', 'oracle' or 'laya'")
 
     # ------------------------------------------------------------ Policy API
 

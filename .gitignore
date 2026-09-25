@@ -9,6 +9,8 @@ data/
 outputs/
 runs/
 calib/
+# Third-party code installed by scripts (e.g. setup_laya_vision.sh), each in its own venv.
+third_party/
 .DS_Store
 build/
 MUJOCO_LOG.TXT
@@ -28,3 +30,6 @@ assets/**/*.3mf
 # assets/end_effectors/kronos/README.md.
 assets/end_effectors/kronos/*
 !assets/end_effectors/kronos/README.md
+
+# Local secrets (API keys). Never commit.
+.env

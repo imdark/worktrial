@@ -376,6 +376,26 @@ Each rung runs everything the next one will, minus one risk:
 
 `tests/test_pick_task.py` runs rungs 1 and 3 in CI (Claude stubbed).
 
+### Optional: laya-vision for "is it held?" (experimental, non-commercial)
+
+[laya-vision](https://huggingface.co/thaitea/laya-vision) is a 201M model that
+answers typed yes/no questions about an image in one forward pass: ~110 ms on
+an M5, against 2.5–4.8 s for Sonnet on `verify`. It cannot answer `locate`
+(no pixel output), so `plan` and `locate` stay with the fallback backend.
+
+```bash
+bash scripts/setup_laya_vision.sh                                  # once: own venv, pinned weights
+third_party/laya-vision/.venv/bin/python scripts/laya_server.py    # leave running
+python scripts/run_pick.py teleop_sim/configs/yam_kronos_pick_sim.yaml --vision laya-oracle --fast
+python scripts/run_pick.py teleop_sim/configs/yam_kronos_pick_real.yaml --vision laya   # falls back to Claude
+```
+
+Zero-shot it may only *confirm* a grasp; any other answer goes to the
+fallback. Its "no" is not trustworthy yet: it said P(held) = 0.17 about a
+glass held in sim. It runs in its own venv because it needs
+`transformers >= 5.3`, which lerobot 0.3.2 rejects. **The weights are
+CC BY-NC-SA 4.0 — not for commercial use.**
+
 ### Running on a robots_realtime rig
 
 1. On the rig, the operator launches the session that owns CAN, the motors and

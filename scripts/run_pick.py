@@ -109,7 +109,11 @@ def main() -> int:
     )
     ap.add_argument("config")
     ap.add_argument(
-        "--vision", choices=["claude", "oracle"], help="override the config's vision type"
+        "--vision",
+        choices=["claude", "oracle", "laya", "laya-oracle"],
+        help="override the config's vision type. 'laya' answers verify with laya-vision "
+        "(start scripts/laya_server.py first) and falls back to the config's vision; "
+        "'laya-oracle' falls back to sim ground truth instead",
     )
     ap.add_argument("--target-body", default="glass_right", help="oracle: the body to pick (sim)")
     ap.add_argument("--instruction", help="override the task instruction")
@@ -153,6 +157,12 @@ def main() -> int:
         policy_cfg["vision"] = {
             k: v for k, v in policy_cfg.get("vision", {}).items() if k not in ("target_body",)
         } | {"type": "claude"}
+    elif args.vision == "laya":
+        policy_cfg["vision"] = {"type": "laya", "fallback": policy_cfg.get("vision", {})}
+    elif args.vision == "laya-oracle":
+        policy_cfg["vision"] = {
+            "type": "laya", "fallback": {"type": "oracle", "target_body": args.target_body}
+        }
     if args.look_only:
         policy_cfg["look_only"] = True
     if args.approach_only:
