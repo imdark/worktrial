@@ -7,6 +7,7 @@ venv/
 .ruff_cache/
 data/
 outputs/
+runs/
 calib/
 .DS_Store
 build/

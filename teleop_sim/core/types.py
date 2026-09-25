@@ -81,6 +81,22 @@ class Button:
     ALL = (RECORD, RESET, DISCARD, ESTOP, TAKEOVER)
 
 
+class TaskEvent:
+    """Events an action source raises to end an episode on the task's own verdict.
+
+    A scripted or VLM-guided task knows when it has finished -- or has failed
+    and why -- before any SuccessDetector could. ``failure(tag)`` carries the
+    reason into ``EpisodeResult.failure_tag``.
+    """
+
+    SUCCESS = "task_success"
+    FAILURE = "task_failure"
+
+    @staticmethod
+    def failure(tag: str) -> str:
+        return f"{TaskEvent.FAILURE}:{tag}" if tag else TaskEvent.FAILURE
+
+
 TeleopKind = Literal["joint", "ee_pose", "ee_delta"]
 
 

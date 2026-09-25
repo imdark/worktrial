@@ -1,0 +1,91 @@
+# Pick up a glass, lift it, put it back -- on gem13's RIGHT arm, guided by Claude.
+#
+# Same policy and loop as yam_kronos_pick_sim.yaml; only the robot section
+# and the measured cell geometry differ.
+#
+# On the rig, the operator first launches the session (it owns CAN, gravity
+# comp, the Kronos gripper and robots_realtime's safety layers):
+#     cd ~/robots_realtime_fleet && ./scripts/launch_gem13.sh
+# Then, from this machine:
+#     python scripts/run_pick.py teleop_sim/configs/yam_kronos_pick_real.yaml --probe
+#     python scripts/run_pick.py teleop_sim/configs/yam_kronos_pick_real.yaml
+# The second asks y/N before every motion (--no-confirm to skip; don't, yet).
+#
+# BEFORE THE FIRST RUN, measure and set: table_z, glass_height, survey_center.
+
+robot:
+  type: robots_realtime
+  spec: ../robots/specs/yam_kronos.yaml
+  # A direct Ethernet link to the rig is IPv6 link-local only, which ZMQ will
+  # not use, and it drops every minute or so. Tunnel the bus over SSH and point
+  # here with --host 127.0.0.1 --ports 15555 15556 (see README, sim-to-real).
+  host: pantheon-gem13.local
+  arm: yam_right
+  cmd_topic: hud/teleop/yam_right/joint_pos   # gem13_inference.yaml's RobotNode input
+  state_topic: yam_right/joint_state
+  cameras:
+    wrist: right_wrist_cam/rgb      # D405 on the right Kronos
+    overview: exo_cam/rgb           # overhead D405; semantics only, no geometry
+  # gem13's follower limits (J2/J3 floors at 0: the rest pose sits at ~0 after
+  # set_zero), with yam_right's tighter J6 from gem13_inference.yaml. Provisional
+  # on the rig too.
+  joint_limits:
+    - [-2.09, 3.14]
+    - [0.0, 3.14]
+    - [0.0, 3.14]
+    - [-1.35, 1.35]
+    - [-1.50, 1.50]
+    - [-2.00, 2.00]
+  max_step_rad: 0.25        # far below the rig's max_command_error guard
+  # The direct Ethernet link drops for tens of seconds every minute or so. Wait
+  # it out: nothing is sent meanwhile, the rig holds the arm, the task resumes.
+  link_grace_s: 90
+
+source:
+  type: policy
+  policy:
+    type: pick_lift_place
+    instruction: "pick up the frosted translucent plastic cup in front of the right arm"
+    wrist_camera: wrist
+    overview_camera: overview
+    vision:
+      type: claude
+      fast_model: claude-sonnet-5
+      smart_model: claude-opus-5-5
+      escalate_below: 0.5
+    table_z: 0.0            # MEASURE: table surface relative to the arm base
+    glass_height: 0.11      # frosted cup, estimated from the wrist camera; MEASURE
+    survey_center: [0.55, -0.03]  # where the cup was placed on 2026-09-24 (2nd spot), arm base frame
+    workspace_xy: {lower: [0.20, -0.30], upper: [0.70, 0.30]}
+    # 2026-09-24 first real pick: at 45 deg pitch and 20 mm past centre the
+    # fingers came in too close and too steep, met the flared upper part of the
+    # tapered frosted cup and toppled it. Grip nearer level and centred instead.
+    # 20 deg is the least pitch that keeps the Kronos body off the table at 50 mm
+    # (lowest point ~14 mm up); flatter is unreachable this low this far out.
+    # Needs an object <= ~70 mm across at 50 mm height (the frosted cup is ~79).
+    # Run 2 (17:39) succeeded at 20 deg / 50 mm but gripped too low and too
+    # nose-down. At ~0.55 m out, 10 deg / 80 mm is reachable (lowest point ~17 mm).
+    # pitch_trim_deg: the level check (17:45) put the real camera ~2 deg further
+    # nose-down than the model for the same joints (Kronos mount is inferred).
+    grasp: {past_centre: 0.0, height: 0.08, pitch_deg: 10.0, standoff: 0.08, pitch_trim_deg: 2.0}
+    max_joint_speed: 0.25   # slow on purpose
+    approach_speed: 0.10
+    settle_seconds: 0.8
+    # gem13 sagged 2.5-6 deg below its commands on the fleet config (no Kronos
+    # mass in gravity comp); walk the command off by the measured shortfall.
+    sag_compensation: true
+    arrive_timeout: 4.0
+
+success: {type: never}
+reset: {type: none}
+
+safety:
+  type: sim_watchdog        # step/time bound; hardware limits live in robots_realtime
+  max_steps: 30000
+  max_seconds: 900
+  enforce_workspace: false  # no scene workspace on the real spec; see workspace_xy
+
+task:
+  name: gem13_yam_kronos_pick_lift_place
+
+seed: 0

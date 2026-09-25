@@ -20,6 +20,10 @@ sim = ["mujoco>=3.2", "mink>=0.0.5"]
 train = ["torch>=2.2", "lerobot"]
 real-feetech = ["feetech-servo-sdk"]
 realsense = ["pyrealsense2"]
+# VLM-guided tasks (perception/claude_vision.py)
+vlm = ["anthropic>=1.8"]
+# A running robots_realtime session over its ZMQ bus (robots/real/rr_bridge.py)
+real-rr = ["pyzmq>=25", "msgpack>=1.0", "msgpack-numpy>=0.4.8"]
 vr = ["oculus-reader"]
 
 [tool.hatch.build.targets.wheel]

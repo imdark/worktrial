@@ -410,6 +410,94 @@ DEFAULT_GLASSES = (
 )
 
 
+@dataclass(frozen=True)
+class TaperedCup:
+    """A tapered plastic cup, narrow at the bottom: gem13's frosted test cup.
+
+    Dimensions estimated from gem13's wrist camera on 2026-09-24 (known camera
+    pose and intrinsics; pixel widths at base and rim): ~57 mm across the base,
+    ~105 mm across the rim, ~110 mm tall. Measure the real one and correct
+    these. Only its bottom ~25 mm is narrower than Kronos opens (~76 mm), so a
+    side grasp has to go low; lifted, the wider part above the pads wedges in.
+    """
+
+    name: str
+    pos: tuple[float, float]
+    base_radius: float = 0.0285
+    rim_radius: float = 0.0525
+    height: float = 0.110
+    wall: float = 0.0015
+    base: float = 0.002
+    segments: int = 24
+    density: float = 900.0  # polypropylene
+    friction: tuple[float, float, float] = (1.0, 0.01, 0.001)
+    rgba: tuple[float, float, float, float] = (0.95, 0.80, 0.74, 0.7)
+
+    def radius_at(self, z: float) -> float:
+        """Outer radius at height z above the table."""
+        return self.base_radius + (self.rim_radius - self.base_radius) * z / self.height
+
+    def mjcf(self, indent: str = "    ") -> str:
+        i, j = indent, indent + "  "
+        rgba = " ".join(f"{c:g}" for c in self.rgba)
+        fr = " ".join(f"{c:g}" for c in self.friction)
+        contact = f'friction="{fr}" solimp="0.95 0.99 0.001" solref="0.004 1"'
+        x, y = self.pos
+        rise = self.height - self.base
+        # Walls lean out by the taper angle: rotate each box about its own
+        # tangential (y) axis so its top moves outward.
+        tilt = math.atan2(self.rim_radius - self.base_radius, rise)
+        half_len = math.hypot(rise, self.rim_radius - self.base_radius) / 2
+        mid_r = (self.base_radius + self.rim_radius) / 2 - self.wall / 2
+        half_chord = (self.rim_radius - self.wall / 2) * math.tan(math.pi / self.segments) * 1.08
+        z = self.base + rise / 2
+        lines = [
+            f'{i}<body name="{self.name}" pos="{x:g} {y:g} 0">',
+            f'{j}<freejoint name="{self.name}_free"/>',
+            f'{j}<geom name="{self.name}_base" type="cylinder" '
+            f'size="{self.base_radius:g} {self.base / 2:g}" pos="0 0 {self.base / 2:g}" '
+            f'density="{self.density:g}" rgba="{rgba}" {contact}/>',
+        ]
+        cy2, sy2 = math.cos(tilt / 2), math.sin(tilt / 2)
+        for k in range(self.segments):
+            theta = 2 * math.pi * k / self.segments
+            cz2, sz2 = math.cos(theta / 2), math.sin(theta / 2)
+            # q = qz(theta) * qy(tilt)
+            qw, qx, qy, qz = cz2 * cy2, -sz2 * sy2, cz2 * sy2, sz2 * cy2
+            cx, cyy = mid_r * math.cos(theta), mid_r * math.sin(theta)
+            lines.append(
+                f'{j}<geom name="{self.name}_wall{k:02d}" type="box" '
+                f'size="{self.wall / 2:g} {half_chord:.6f} {half_len:.6f}" '
+                f'pos="{cx:.6f} {cyy:.6f} {z:g}" quat="{qw:.6f} {qx:.6f} {qy:.6f} {qz:.6f}" '
+                f'density="{self.density:g}" rgba="{rgba}" {contact}/>'
+            )
+        lines.append(f"{i}</body>")
+        return "\n".join(lines) + "\n"
+
+
+#: Where gem13's right arm found it (right-arm base frame).
+GEM13_CUP = TaperedCup(name="cup", pos=(0.442, 0.084))
+
+
+def build_cup(cups: tuple[TaperedCup, ...] = (GEM13_CUP,)) -> str:
+    bodies = "".join(cup.mjcf() for cup in cups)
+    return (
+        GENERATED_HEADER
+        + '<mujoco model="cups">\n  <worldbody>\n'
+        + bodies
+        + "  </worldbody>\n</mujoco>\n"
+    )
+
+
+def build_cup_scene(glasses_scene_xml: str) -> str:
+    """The glasses table's cell (table, lights, top camera) holding the cup instead."""
+    if '<include file="glasses.xml"/>' not in glasses_scene_xml:
+        raise ValueError("glasses scene no longer includes glasses.xml")
+    return GENERATED_HEADER + glasses_scene_xml.replace(
+        '<include file="glasses.xml"/>', '<include file="cup.xml"/>'
+    ).replace('<mujoco model="glasses_table">', '<mujoco model="cup_table">')
+
+
 def build_glasses(glasses: tuple[DrinkingGlass, ...] = DEFAULT_GLASSES) -> str:
     bodies = "".join(glass.mjcf() for glass in glasses)
     return (

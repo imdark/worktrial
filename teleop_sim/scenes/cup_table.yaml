@@ -1,0 +1,27 @@
+# The glasses table's cell holding one tapered frosted cup where a real rig's
+# right arm found it (teleop_sim/envs/yam_assets.py: TaperedCup). Same table,
+# lights and overhead camera. Contains no robot -- one is placed into it.
+#
+# On hardware the same description still applies to the fixed parts of the
+# cell: the overhead camera and the workspace envelope belong to the table the
+# arm is bolted to, not to the arm.
+
+name: cup_table
+version: "1"
+mjcf_path: ../../assets/scenes/cup_table/scene.xml
+
+# Where the arm's base sits in the cell: xyz + wxyz quaternion.
+arm_mount: [0, 0, 0, 1, 0, 0, 0]
+
+cameras:
+  - name: top
+    mount: world
+    pose: [0.22, 0.0, 0.72, 0.701027, 0.092527, -0.092527, -0.701027]
+    fovy_deg: 55.0
+    resolution: [640, 480]
+
+# Safety envelope for the grasp point, enforced by the watchdog once autonomous
+# operation begins.
+workspace:
+  lower: [0.05, -0.5, 0.005]
+  upper: [0.7, 0.5, 0.7]

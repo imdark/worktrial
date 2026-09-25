@@ -11,6 +11,10 @@ modelled from its CAD for sim2real. The same code
 drives a placeholder SO-101 arm, which is the point: a robot is a YAML spec
 plus a driver, not a rewrite.
 
+The first **sim-to-real** result is in: a Claude-guided pick / lift / place
+that runs unchanged in MuJoCo and on a real YAM + Kronos arm driven through a
+`robots_realtime` session. See [Sim-to-real](#sim-to-real-a-claude-guided-pick-on-a-real-yam).
+
 > Architecture and the full 14-stage plan: [DESIGN.md](DESIGN.md).
 > Why YAM, and what public data exists for it: [research/yam_research.md](research/yam_research.md).
 
@@ -21,9 +25,10 @@ plus a driver, not a rewrite.
 | 0 — skeleton and contracts | ✅ | the seams, the control loop, startup compatibility check, conformance suite |
 | 1 — simulated robot and scene | ✅ | MuJoCo YAM + glasses scene; composable arm / end effector / scene descriptions; Kronos production gripper |
 | 2 — teleop loop, async inference | next | keyboard teleop, `AsyncPolicySource`, per-step staleness |
+| VLM pick MVP (ahead of plan: Stages 9 + 12, first cut) | ✅ | Claude-guided pick / lift / place, same code in sim and on a real YAM + Kronos; 3 real picks, 2 successful |
 
 ```
-pytest          279 passed, 11 skipped   (239 passed, 51 skipped without the Kronos assets)
+pytest          294 passed, 11 skipped   (250 passed, 55 skipped without the Kronos assets)
 ruff check .    clean
 ```
 
@@ -59,6 +64,8 @@ Optional extras, so machines only install what they use:
 | `dev` | pytest, ruff | tests, lint |
 | `sim` | MuJoCo, mink | the YAM / SO-101 simulation |
 | `train` | torch, LeRobot | training (Stage 5) |
+| `vlm` | anthropic | Claude as the vision model of the pick task |
+| `real-rr` | pyzmq, msgpack, msgpack-numpy | driving an arm through a running `robots_realtime` session |
 | `real-feetech`, `realsense`, `vr` | hardware SDKs | real robots, cameras, VR teleop |
 
 ---
@@ -299,6 +306,115 @@ same YAM arm that passes the full conformance suite.
 
 ---
 
+## Sim-to-real: a Claude-guided pick on a real YAM
+
+The task: find a cup or glass with a vision model, pick it up, lift it, verify
+the grasp, put it back where it was, and return. One policy, one control loop,
+one config switch between simulation and the real arm.
+
+### Architecture
+
+```
+          ┌──────────────── Claude (Anthropic API) ─────────────────┐
+          │ Opus 5.5 · plan: which object does the instruction mean? │  once per episode
+          │ Sonnet 5 · locate: base / rim pixels of that object      │  every view
+          │ Sonnet 5 · verify: is it held?  (unsure → Opus 5.5)      │  after lift
+          └───────────────▲──────────────────────────┬───────────────┘
+                          │ images                    │ pixels, never metres
+┌─────────────────────────┴──────────────────────────▼──────────────────────┐
+│ PickLiftPlacePolicy (tasks/pick_lift_place.py) — a Policy like any other  │
+│   survey view → plan → locate → closer view → locate → grasp waypoints    │
+│   pixel → ray → table plane (perception/camera.py; glass depth is useless)│
+│   → IK on the same RobotSpec model (robots/kinematics.py) → joint chunks  │
+│   jaw reading + model → held?  arrival check + gravity-sag compensation   │
+└──────────────────────────────────┬────────────────────────────────────────┘
+                     ControlLoop (unchanged) · PolicySource · TaskEvent ends the episode
+                                   │
+            robot.type: mujoco ────┴──── robot.type: robots_realtime
+        MujocoRobot (sim)                 RobotsRealtimeRobot (robots/real/rr_bridge.py)
+        OracleVision = ground truth         ZMQ bus of a running rr-session:
+                                            hud/teleop/<arm>/joint_pos  →  arm
+                                            <arm>/joint_state, <cam>/rgb →  obs
+                                            (rr keeps its own safety layers, gravity comp,
+                                             gripper logic; silence = hold position)
+```
+
+Design decisions that matter:
+
+- **The model never commands the arm.** Claude answers in pixels. Geometry turns
+  a pixel into a table position: the camera ray through the point where the
+  glass meets the table, intersected with the table plane. A transparent glass
+  gives stereo depth nothing to measure, and the table reads fine.
+- **Model routing.** Frequent narrow questions go to the fast model at low
+  effort, rare scene reasoning to the smart model at high effort, and a
+  low-confidence fast answer is asked again of the smart model. Answers come
+  back through structured outputs (a JSON schema), not forced tool use.
+- **Physics before vision for "is it held?".** Jaws that closed all the way
+  hold nothing (1.00 in sim); jaws that stopped part-way hold something (0.12
+  in sim, 0.75–0.78 on the real cup). The model is asked only in the second case, and only a
+  confident "no" overrides the jaws. A camera-only check failed in sim: Sonnet
+  saw the other glass on the table and called a held glass "not held".
+- **Never let go in the air.** A failed grasp is put back down before opening.
+- **Slow is safe.** A vision call blocks the loop while the arm stands still
+  between segments. `robots_realtime` holds position once commands pause for
+  0.5 s, and ramps back in from the measured pose when they resume, so pauses,
+  and link drops of up to 90 s, cost only time.
+
+### The sim-to-real ladder
+
+Each rung runs everything the next one will, minus one risk:
+
+| Rung | Command | What it proves |
+|---|---|---|
+| 1. sim, oracle vision | `run_pick.py configs/yam_kronos_pick_sim.yaml --vision oracle --fast` | geometry, IK, motion, loop (no API key) |
+| 2. sim, Claude | `run_pick.py configs/yam_kronos_pick_sim.yaml` | prompts, parsing, routing, verification |
+| 3. real config vs a sim rig | `python -m teleop_sim.robots.real.sim_rig` + `run_pick.py configs/yam_kronos_pick_real.yaml --host 127.0.0.1` | the bridge and the bus protocol, without the arm |
+| 4. real, read-only | `... --probe` | link, clock skew, joint + gripper conventions, cameras (sends nothing) |
+| 5. real, look only | `... --look-only` | perception on the real cameras; arm never near the object |
+| 6. real, approach only | `... --approach-only` | reach and alignment at the standoff pose, no contact |
+| 7. real, full | `... ` (asks y/N before every motion unless `--no-confirm`) | the task |
+
+`tests/test_pick_task.py` runs rungs 1 and 3 in CI (Claude stubbed).
+
+### Running on a robots_realtime rig
+
+1. On the rig, the operator launches the session that owns CAN, the motors and
+   the cameras (it needs sudo), e.g. `./scripts/launch_gem13.sh`.
+2. Reach its bus. A direct Ethernet link to the rig here is IPv6 link-local
+   only, which ZMQ will not use, and it drops every minute or so, so tunnel:
+   ```bash
+   ssh -N -L 15555:127.0.0.1:5555 -L 15556:127.0.0.1:5556 pantheon@<rig>.local
+   ```
+3. Set `ANTHROPIC_API_KEY` in the environment (never in a file), then climb
+   rungs 4–7 with `--host 127.0.0.1 --ports 15555 15556`.
+
+Every run writes `runs/<timestamp>/`: `events.jsonl`, `calls.jsonl` (each model
+call with its image, answer, latency, tokens and request id) and the annotated
+images. That log is the raw material for evaluation.
+
+### What the real rig taught us (2026-09-24, YAM + Kronos, frosted tapered cup)
+
+- **Bus protocol**, read from `robots_realtime`: XSUB/XPUB broker on 5555/5556,
+  `[topic, msgpack({ts, src, data})]` with msgpack-numpy arrays, sender-clock
+  timestamps checked against a 0.5 s command timeout (the bridge measures skew),
+  and a normalised gripper with **1.0 = open**, the reverse of this repo's.
+- **Kinematics agree with the vendor's**: identical joint signs and zeros; link
+  geometry differs from i2rt's `yam.xml` by ~6 mm mean / ~12 mm worst at the
+  flange. Targets seen by the wrist camera and reached by the same model mostly
+  cancel it.
+- **Gravity sag**: 2.5–6° below command on the rig's fleet config.
+  `sag_compensation` walks the command off by the measured shortfall; the arm
+  then arrives within ~1° and a few mm.
+- **Tool pitch**: with the joints exactly at a level pose, the wrist camera and
+  the operator put the real tool ~2° more nose-down than the model predicts
+  (the Kronos mount is inferred, not measured). `grasp.pitch_trim_deg: 2.0`.
+- **Grasp geometry**: 45° nose-down, gripping 2 cm past the centre toppled the tapered
+  cup. Near-level and centred works: 20° at 50 mm (run 2) and, gripping higher,
+  10° at 80 mm with the 2° trim (run 3). Level (0°) is unreachable that low
+  that far out; lower hits the table with the Kronos body.
+- **Localization**: survey and closer-view estimates agree to 7–23 mm.
+  A full real pick takes 75–90 s.
+
 ## How it fits together
 
 Eight seams get an interface: `Robot`, `Teleoperator`, `Retargeter`, `Camera`,
@@ -329,18 +445,23 @@ is concrete.
 | `teleop_sim/builtins.py` | populates the registries; heavy backends are declared, not imported |
 | `teleop_sim/control/` | the one control loop, action sources, compatibility check, latency, safety |
 | `teleop_sim/robots/sim/` | `MujocoRobot` |
+| `teleop_sim/robots/real/` | `RobotsRealtimeRobot` (bridge to a running `robots_realtime` session), its wire format, and `SimRig`, a MuJoCo rig speaking the same protocol |
+| `teleop_sim/robots/kinematics.py` | FK / IK on a RobotSpec's model, off the physics state (shared by sim and real) |
+| `teleop_sim/perception/` | pinhole geometry, the `Vision` interface, `ClaudeVision` (Opus 5.5 / Sonnet 5), `OracleVision` (sim ground truth) |
+| `teleop_sim/tasks/` | `PickLiftPlacePolicy`, the VLM-guided pick / lift / place |
+| `teleop_sim/runlog.py` | per-run events, model calls and images |
 | `teleop_sim/core/parts.py` | arm / end effector / scene descriptions and how they compose |
 | `teleop_sim/robots/arms/`, `end_effectors/` | part descriptions |
 | `teleop_sim/robots/specs/` | robots: `yam.yaml`, `yam_kronos.yaml` (compositions), `so101.yaml` (monolithic) |
 | `teleop_sim/robots/sim/assembly.py` | builds one MuJoCo model from the parts |
 | `teleop_sim/scenes/` | scene descriptions |
 | `teleop_sim/envs/` | scene handles, task composition, asset generators (YAM, Kronos), the scripted grasp |
-| `teleop_sim/configs/` | run configs: `yam_glasses`, `sim_policy` (SO-101), fake configs |
+| `teleop_sim/configs/` | run configs: `yam_glasses`, `yam_kronos_pick_sim`, `yam_kronos_pick_real`, `sim_policy` (SO-101), fake configs |
 | `assets/i2rt_yam/` | vendored YAM (`upstream/`, untouched) and the generated arm |
 | `assets/end_effectors/` | end-effector models: `yam_linear/` (generated from upstream), `kronos/` (generated locally, not tracked) |
-| `assets/scenes/` | scene models (`glasses_table/`) |
+| `assets/scenes/` | scene models (`glasses_table/`, `cup_table/` with the real rig's tapered cup) |
 | `assets/so101/` | placeholder SO-101 model and scene |
-| `scripts/` | viewing: `view.py`, `snapshot.py`, `record_demo.py`, `export_model.py`; asset builds: `build_yam_assets.py`, `build_kronos_assets.py`, `build_kronos_model.py` |
+| `scripts/` | tasks: `run_pick.py`; viewing: `view.py`, `snapshot.py`, `record_demo.py`, `export_model.py`; asset builds: `build_yam_assets.py`, `build_kronos_assets.py`, `build_kronos_model.py` |
 | `tests/conformance/` | the shared contract every `Robot` implementation must pass |
 | `tests/fakes.py` | every seam with no physics, hardware or rendering |
 | `research/` | background: the YAM survey, the hierarchical-VLA thesis |
@@ -353,6 +474,7 @@ pytest tests/test_yam_scene.py        # the glasses environment, including the g
 pytest tests/conformance/             # the Robot contract: fake, SO-101, YAM + each gripper
 pytest tests/test_composition.py      # arm / end effector / scene composition
 pytest tests/test_kronos.py           # Kronos against its hardware evidence (skips without its assets)
+pytest tests/test_pick_task.py        # the VLM pick: geometry, sim, the real bridge against a sim rig
 ```
 
 Two conventions that matter when adding code:
@@ -366,6 +488,15 @@ Two conventions that matter when adding code:
   exactly like bad policy performance.
 
 ## Known limitations
+
+- **The VLM pick is an MVP.** Three real runs, two successes, one object. The
+  table height, cup dimensions and Kronos jaw opening are estimates, the grasp
+  was tuned by hand at the rig, and the loop blocks during vision calls
+  (`AsyncPolicySource` is still Stage 2). The bridge drives one arm; the core
+  types are single-arm by design.
+- **Sim and the rig disagree** on the Kronos jaw opening (the real one grips a
+  cup the model says is too wide) and on tool pitch (~2°). Both belong in the
+  Kronos description once measured.
 
 - **The grasp works but isn't robust yet.** The stock gripper squeezes only
   ~1.5 N per side. With Kronos, 12 of 16 swept grasp variants lift the glass but

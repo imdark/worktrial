@@ -28,7 +28,7 @@ from teleop_sim.core.protocols import (
     SafetyMonitor,
     SuccessDetector,
 )
-from teleop_sim.core.types import Button, EpisodeResult, Outcome
+from teleop_sim.core.types import Button, EpisodeResult, Outcome, TaskEvent
 
 # Events that end an episode immediately, mapped to (outcome, tag, discard).
 _TERMINAL_EVENTS: dict[str, tuple[Outcome, str, bool]] = {
@@ -36,6 +36,8 @@ _TERMINAL_EVENTS: dict[str, tuple[Outcome, str, bool]] = {
     Button.DISCARD: (Outcome.ABORTED, "discard", True),
     Button.RESET: (Outcome.ABORTED, "reset", False),
 }
+# A source's own verdict on the task: TaskEvent.SUCCESS, or TaskEvent.failure(tag).
+_TASK_EVENT_PREFIX = "task_"
 
 
 @dataclass
@@ -127,6 +129,14 @@ class ControlLoop:
             terminal = next((e for e in events if e in _TERMINAL_EVENTS), None)
             if terminal is not None:
                 outcome, tag, discard = _TERMINAL_EVENTS[terminal]
+                break
+            verdict_event = next((e for e in events if e.startswith(_TASK_EVENT_PREFIX)), None)
+            if verdict_event is not None:
+                if verdict_event == TaskEvent.SUCCESS:
+                    outcome = Outcome.SUCCESS
+                else:
+                    outcome = Outcome.FAILURE
+                    tag = verdict_event.partition(":")[2] or TaskEvent.FAILURE
                 break
 
             sent = self.robot.send_action(action)

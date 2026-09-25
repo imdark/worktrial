@@ -1,0 +1,46 @@
+# Pick up a glass, lift it, put it back -- in MuJoCo, guided by Claude.
+#
+# Same task, same policy, same loop as yam_kronos_pick_real.yaml; only the
+# robot section differs. Run:
+#
+#   python scripts/run_pick.py teleop_sim/configs/yam_kronos_pick_sim.yaml --vision oracle
+#   python scripts/run_pick.py teleop_sim/configs/yam_kronos_pick_sim.yaml
+#
+# The first uses privileged sim state for vision (no API key); the second
+# sends camera frames to Claude.
+
+robot:
+  type: mujoco
+  spec: ../robots/specs/yam_kronos.yaml
+  scene: ../scenes/glasses_table.yaml
+
+source:
+  type: policy
+  policy:
+    type: pick_lift_place
+    instruction: "pick up the glass on the right"
+    overview_camera: top
+    vision:
+      type: claude
+      fast_model: claude-sonnet-5     # locate + verify, every attempt
+      smart_model: claude-opus-5-5    # plan (which glass?), and escalations
+      escalate_below: 0.5
+    table_z: 0.0          # table surface in the arm base frame
+    glass_height: 0.10
+    survey_center: [0.40, 0.0]
+    grasp: {past_centre: 0.02, height: 0.09, pitch_deg: 45.0}   # KRONOS_GRASP
+    max_joint_speed: 0.5
+    approach_speed: 0.2
+
+success: {type: never}    # the task ends the episode itself (TaskEvent)
+reset: {type: none}
+
+safety:
+  type: sim_watchdog
+  max_steps: 20000
+  enforce_workspace: true
+
+task:
+  name: yam_kronos_pick_lift_place
+
+seed: 0

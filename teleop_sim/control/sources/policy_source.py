@@ -51,5 +51,10 @@ class PolicySource(ActionSource):
         action.source = self.origin
         return action
 
+    def poll_events(self) -> set[str]:
+        """A task-level policy may end the episode itself (TaskEvent)."""
+        poll = getattr(self.policy, "poll_events", None)
+        return set(poll()) if poll is not None else set()
+
     def policy_spec(self) -> PolicySpec | None:
         return getattr(self.policy, "spec", None)
