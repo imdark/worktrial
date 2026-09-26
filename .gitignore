@@ -33,3 +33,8 @@ assets/end_effectors/kronos/*
 
 # Local secrets (API keys). Never commit.
 .env
+
+# Demo media and HTML exports: kept locally, not in the repository.
+demo/
+docs/pages/
+docs/presentation/
