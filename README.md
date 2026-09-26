@@ -429,43 +429,56 @@ closed-on-nothing case the laya dataset lacks. Data, plots and caveats:
 [`docs/experiments/2026-09-25-gripper-current/`](docs/experiments/2026-09-25-gripper-current/README.md);
 plot any real episode with `python scripts/plot_gripper_current.py runs/<batch>/ep01`.
 
-### Optional: vision safety loop (opt-in, `--hazard-monitor`)
+### Optional: collision detection (opt-in, `--hazard-monitor`, `--contact-monitor`)
 
-Off unless asked for. With `--hazard-monitor` on `run_pick.py` or
-`collect_real_picks.py`, the run's safety monitor is wrapped in
-`vision_hazard` (`teleop_sim/control/safety/vision_hazard.py`, settings in
-`teleop_sim/configs/safety/vision_hazard.yaml`):
+Both are off unless asked for (`run_pick.py`, `collect_real_picks.py`,
+`run_sweep.py`), and they can run together. Each stops the arm on an alarm and
+hands the decision to Claude. Claude answers *resume* (the motion carries on),
+*wait* (hold, look again) or *abort* (safe stop).
 
-1. In a background thread, laya-vision asks a few times a second whether a
-   person's hand or arm is in the wrist or overhead view (~150 ms per answer).
-2. One confident "yes" does nothing. **Three in a row (~1 s) pause the arm**:
-   the loop stops commanding and the rig holds its pose.
-3. **Claude decides.** Sonnet 5 sees the frame that raised the alarm and
-   fresh frames from both cameras, then answers *resume* (false alarm or
-   hazard gone; the motion continues where it stopped), *wait* (hold, look
-   again in 3 s) or *abort* (safe stop, episode over). A resume it is unsure
-   of goes to Opus 5.5.
-4. It fails closed. No answer from Claude, still unclear after 60 s, more
-   than 6 alarms in an episode, or a laya server that stops answering for
-   2 s all stop the arm. A run with no laya server refuses to start.
+- **Camera monitor, `--hazard-monitor`**
+  (`teleop_sim/control/safety/vision_hazard.py`, `configs/safety/vision_hazard.yaml`):
+  - laya-vision runs locally and asks, a few times a second, whether a person's
+    hand or arm is in the wrist or overhead view.
+  - Three confident answers in a row pause the arm.
+- **Contact monitor, `--contact-monitor [log|enforce]`**
+  (`teleop_sim/control/safety/contact.py`, `configs/safety/contact_monitor.yaml`):
+  - It predicts each joint's torque from the calibrated model, plus a correction
+    fitted on normal runs (`scripts/fit_torque_model.py`, written to
+    `data/torque_models/gem13.json`).
+  - It trips when measured torque departs from the prediction for about 100 ms.
+  - `log` (the default) only records. `enforce` stops the arm, backs it off 3 cm
+    along its path, and asks Claude. On a resume, it glides back before the
+    motion continues.
+- **Claude's review** (`teleop_sim/control/safety/review.py`):
+  - What Claude sees: frames from the start of the run (the reference scene), the
+    moment of the alarm, and now.
+  - What it's told: what the detector saw, and what the gripper's sensors report,
+    since closed jaws on a rim can look like a grasp.
+  - Models: Sonnet 5 decides; an unsure resume or abort goes to Opus 5.5.
+  - It fails closed. No answer from Claude, still unclear after 60 s, or more
+    than `max_alarms` alarms in an episode all keep the arm stopped. A laya
+    server that stops answering also stops the arm.
 
 ```bash
 third_party/laya-vision/.venv/bin/python scripts/laya_server.py    # leave running
-python scripts/run_pick.py teleop_sim/configs/yam_kronos_pick_real.yaml --hazard-monitor
-python scripts/eval_hazard_monitor.py runs/collect_<ts>            # false alarms on recorded runs
-python scripts/watch_hazards.py teleop_sim/configs/yam_kronos_pick_real.yaml \
-    --host <rig> --camera-port 5557 --label hazard --note "hand near gripper"   # arm untouched
+python scripts/run_pick.py teleop_sim/configs/yam_kronos_pick_real.yaml --hazard-monitor --contact-monitor enforce
+python scripts/run_sweep.py teleop_sim/configs/yam_kronos_sweep_real.yaml --host <rig> --camera-port 5557 \
+    --contact-monitor enforce --hazard-monitor           # straight-line sweeps to test both; reports reaction times
+python scripts/record_cameras.py record --host <rig> --out runs/<run>/video   # video, in a separate process
 ```
 
-Measured zero-shot on the 10-episode clean batch: **0 false alarms in 12.9
-min**. Claude cleared staged false alarms on real frames in 2.5–3.4 s. Only
-*person* questions ship. Asking "any object other than the cup in the path?"
-misfires on 87–99 % of clean frames: zero-shot, the model cannot tell the
-target cup, the spare cup or the gripper from an obstacle. Object checks
-need fine-tuning on frames recorded with `watch_hazards.py --label`.
-Detection rate is **not yet measured**: no recorded frame contains a hazard.
-This supplements the e-stop and robots_realtime's limits; it does not
-replace them.
+**Measured on gem13** in a 254 s sweep of 10 cycles, with an operator disturbing
+it on purpose
+([write-up](docs/experiments/2026-09-25-collision-detection/README.md)):
+- **12 of 12 disturbances caught:** 3 pushes, detected in about 110 ms, with the
+  arm moving away about 105 ms later; and 9 hands, paused about 0.5 s after the
+  first frame.
+- **No false alarms.**
+- **All 12 resumed** after 7.5–10 s of Claude review.
+- **laya-vision only asks about people**, so objects are caught by touch alone.
+- **It supplements the e-stop** and robots_realtime's limits; it doesn't replace
+  them.
 
 ### Running on a robots_realtime rig
 
@@ -534,12 +547,12 @@ is concrete.
 |---|---|
 | `teleop_sim/core/` | canonical types, robot and policy specs, protocols, registry, clock, hashing |
 | `teleop_sim/builtins.py` | populates the registries; heavy backends are declared, not imported |
-| `teleop_sim/control/` | the one control loop, action sources, compatibility check, latency, safety (`sim_watchdog`, opt-in `vision_hazard`) |
+| `teleop_sim/control/` | the one control loop, action sources, compatibility check, latency, safety (`sim_watchdog`, opt-in `vision_hazard` and `contact_monitor`, shared Claude `review`) |
 | `teleop_sim/robots/sim/` | `MujocoRobot` |
 | `teleop_sim/robots/real/` | `RobotsRealtimeRobot` (bridge to a running `robots_realtime` session), its wire format, and `SimRig`, a MuJoCo rig speaking the same protocol |
 | `teleop_sim/robots/kinematics.py` | FK / IK on a RobotSpec's model, off the physics state (shared by sim and real) |
 | `teleop_sim/perception/` | pinhole geometry, the `Vision` interface, `ClaudeVision` (Opus 5.5 / Sonnet 5), `OracleVision` (sim ground truth) |
-| `teleop_sim/tasks/` | `PickLiftPlacePolicy`, the VLM-guided pick / lift / place |
+| `teleop_sim/tasks/` | `PickLiftPlacePolicy`, the VLM-guided pick / lift / place; `LinearSweepPolicy`, straight-line sweeps for safety tests |
 | `teleop_sim/runlog.py` | per-run events, model calls and images |
 | `teleop_sim/core/parts.py` | arm / end effector / scene descriptions and how they compose |
 | `teleop_sim/robots/arms/`, `end_effectors/` | part descriptions |
@@ -567,6 +580,8 @@ pytest tests/test_composition.py      # arm / end effector / scene composition
 pytest tests/test_kronos.py           # Kronos against its hardware evidence (skips without its assets)
 pytest tests/test_pick_task.py        # the VLM pick: geometry, sim, the real bridge against a sim rig
 pytest tests/test_vision_hazard.py    # the vision safety loop: debounce, pause, Claude's decisions (fake models)
+pytest tests/test_contact.py          # motor-torque contact detection: model fit, detector, back-off, review
+pytest tests/test_linear_sweep.py     # the straight-line sweep used to test the monitors (sim)
 ```
 
 Two conventions that matter when adding code:

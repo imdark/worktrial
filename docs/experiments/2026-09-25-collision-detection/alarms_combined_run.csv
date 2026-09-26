@@ -1,0 +1,13 @@
+alarm,source,t_s,phase,detail,detect_ms,react_ms,backed_off_mm,claude,stopped_s,resumed_to_moving_ms
+camera 1,laya-vision,7.1,,laya-vision: hand_overview on overview P(yes)=0.81/0.79/0.80,502,,,"wait (0.90, claude-sonnet-5) / resume (0.90, claude-sonnet-5)",8.4,43
+contact 1,motor torque,22.3,down,jump on J1: -7.1 sigma for 3 steps (phase down),108,103,20,"wait (0.60, claude-sonnet-5) / resume (0.75, claude-sonnet-5)",10.0,2454
+camera 2,laya-vision,37.0,,laya-vision: hand_overview on overview P(yes)=0.86/0.83/0.88,495,,,"wait (0.90, claude-sonnet-5) / resume (0.90, claude-sonnet-5)",8.4,42
+camera 3,laya-vision,50.4,,laya-vision: hand_overview on overview P(yes)=0.71/0.66/0.86,463,,,"wait (0.90, claude-sonnet-5) / resume (0.90, claude-sonnet-5)",8.2,40
+contact 2,motor torque,62.2,to_z_line,sustained on J1: -7.7 sigma for 3 steps (phase to_z_line),111,107,27,"wait (0.60, claude-sonnet-5) / resume (0.75, claude-sonnet-5)",9.1,1004
+camera 4,laya-vision,75.4,,laya-vision: hand_overview on overview P(yes)=0.80/0.87/0.84,488,,,"wait (0.85, claude-sonnet-5) / resume (0.90, claude-sonnet-5)",7.8,39
+camera 5,laya-vision,92.6,,laya-vision: hand_overview on overview P(yes)=0.84/0.87/0.90,482,,,"wait (0.85, claude-sonnet-5) / resume (0.90, claude-sonnet-5)",8.4,45
+camera 6,laya-vision,111.4,,laya-vision: hand_overview on overview P(yes)=0.73/0.85/0.84,497,,,"wait (0.90, claude-sonnet-5) / resume (0.90, claude-sonnet-5)",7.5,41
+contact 3,motor torque,128.3,up,sustained on J1: -6.1 sigma for 3 steps (phase up),125,112,46,"wait (0.55, claude-sonnet-5) / resume (0.75, claude-sonnet-5)",9.0,1199
+camera 7,laya-vision,143.6,,laya-vision: hand_overview on overview P(yes)=0.86/0.88/0.90,458,,,"wait (0.90, claude-sonnet-5) / resume (0.90, claude-sonnet-5)",7.8,48
+camera 8,laya-vision,173.5,,laya-vision: hand_overview on overview P(yes)=0.83/0.87/0.81,480,,,"wait (0.85, claude-sonnet-5) / resume (0.90, claude-sonnet-5)",8.4,40
+camera 9,laya-vision,211.0,,laya-vision: hand_overview on overview P(yes)=0.83/0.85/0.83,496,,,"wait (0.80, claude-sonnet-5) / resume (0.90, claude-sonnet-5)",7.7,39

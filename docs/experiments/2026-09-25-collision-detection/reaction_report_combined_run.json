@@ -1,0 +1,229 @@
+{
+  "run": "runs/sweep_both_20260925-171928",
+  "contacts": [
+    {
+      "detected": 1790382002.418661,
+      "phase": "down",
+      "detail": "jump on J1: -7.1 sigma for 3 steps (phase down)",
+      "joint": 1,
+      "decisions": [
+        "wait (0.60, claude-sonnet-5)",
+        "resume (0.75, claude-sonnet-5)"
+      ],
+      "backing_off": 1790382002.418911,
+      "backed_off_mm": 20,
+      "back_5mm": 1790382002.5219781,
+      "resumed": 1790382012.430922,
+      "onset": 1790382002.311,
+      "moving_again": 1790382014.885,
+      "ms": {
+        "onset_to_detected": 108,
+        "detected_to_backing_off": 0,
+        "detected_to_5mm_back": 103,
+        "detected_to_resumed": 10012,
+        "resumed_to_moving": 2454
+      }
+    },
+    {
+      "detected": 1790382042.269461,
+      "phase": "to_z_line",
+      "detail": "sustained on J1: -7.7 sigma for 3 steps (phase to_z_line)",
+      "joint": 1,
+      "decisions": [
+        "wait (0.60, claude-sonnet-5)",
+        "resume (0.75, claude-sonnet-5)"
+      ],
+      "backing_off": 1790382042.269687,
+      "backed_off_mm": 27,
+      "back_5mm": 1790382042.376937,
+      "resumed": 1790382051.370393,
+      "onset": 1790382042.158,
+      "moving_again": 1790382052.374,
+      "ms": {
+        "onset_to_detected": 111,
+        "detected_to_backing_off": 0,
+        "detected_to_5mm_back": 107,
+        "detected_to_resumed": 9101,
+        "resumed_to_moving": 1004
+      }
+    },
+    {
+      "detected": 1790382108.379646,
+      "phase": "up",
+      "detail": "sustained on J1: -6.1 sigma for 3 steps (phase up)",
+      "joint": 1,
+      "decisions": [
+        "wait (0.55, claude-sonnet-5)",
+        "resume (0.75, claude-sonnet-5)"
+      ],
+      "backing_off": 1790382108.379966,
+      "backed_off_mm": 46,
+      "back_5mm": 1790382108.4921238,
+      "resumed": 1790382117.420869,
+      "onset": 1790382108.255,
+      "moving_again": 1790382118.62,
+      "ms": {
+        "onset_to_detected": 125,
+        "detected_to_backing_off": 0,
+        "detected_to_5mm_back": 112,
+        "detected_to_resumed": 9041,
+        "resumed_to_moving": 1199
+      }
+    }
+  ],
+  "hazards": [
+    {
+      "paused": 1790381987.1561458,
+      "check": "hand_overview",
+      "detail": "laya-vision: hand_overview on overview P(yes)=0.81/0.79/0.80",
+      "decisions": [
+        "wait (0.90, claude-sonnet-5)",
+        "resume (0.90, claude-sonnet-5)"
+      ],
+      "first_confident_frame": 1790381986.654256,
+      "resumed": 1790381995.563422,
+      "moving_again": 1790381995.606,
+      "ms": {
+        "first_frame_to_paused": 502,
+        "paused_to_resumed": 8407,
+        "resumed_to_moving": 43
+      }
+    },
+    {
+      "paused": 1790382017.0789251,
+      "check": "hand_overview",
+      "detail": "laya-vision: hand_overview on overview P(yes)=0.86/0.83/0.88",
+      "decisions": [
+        "wait (0.90, claude-sonnet-5)",
+        "resume (0.90, claude-sonnet-5)"
+      ],
+      "first_confident_frame": 1790382016.58374,
+      "resumed": 1790382025.490836,
+      "moving_again": 1790382025.533,
+      "ms": {
+        "first_frame_to_paused": 495,
+        "paused_to_resumed": 8412,
+        "resumed_to_moving": 42
+      }
+    },
+    {
+      "paused": 1790382030.522411,
+      "check": "hand_overview",
+      "detail": "laya-vision: hand_overview on overview P(yes)=0.71/0.66/0.86",
+      "decisions": [
+        "wait (0.90, claude-sonnet-5)",
+        "resume (0.90, claude-sonnet-5)"
+      ],
+      "first_confident_frame": 1790382030.059415,
+      "resumed": 1790382038.6854389,
+      "moving_again": 1790382038.725,
+      "ms": {
+        "first_frame_to_paused": 463,
+        "paused_to_resumed": 8163,
+        "resumed_to_moving": 40
+      }
+    },
+    {
+      "paused": 1790382055.537429,
+      "check": "hand_overview",
+      "detail": "laya-vision: hand_overview on overview P(yes)=0.80/0.87/0.84",
+      "decisions": [
+        "wait (0.85, claude-sonnet-5)",
+        "resume (0.90, claude-sonnet-5)"
+      ],
+      "first_confident_frame": 1790382055.049642,
+      "resumed": 1790382063.296866,
+      "moving_again": 1790382063.336,
+      "ms": {
+        "first_frame_to_paused": 488,
+        "paused_to_resumed": 7759,
+        "resumed_to_moving": 39
+      }
+    },
+    {
+      "paused": 1790382072.698627,
+      "check": "hand_overview",
+      "detail": "laya-vision: hand_overview on overview P(yes)=0.84/0.87/0.90",
+      "decisions": [
+        "wait (0.85, claude-sonnet-5)",
+        "resume (0.90, claude-sonnet-5)"
+      ],
+      "first_confident_frame": 1790382072.2163992,
+      "resumed": 1790382081.133556,
+      "moving_again": 1790382081.179,
+      "ms": {
+        "first_frame_to_paused": 482,
+        "paused_to_resumed": 8435,
+        "resumed_to_moving": 45
+      }
+    },
+    {
+      "paused": 1790382091.499952,
+      "check": "hand_overview",
+      "detail": "laya-vision: hand_overview on overview P(yes)=0.73/0.85/0.84",
+      "decisions": [
+        "wait (0.90, claude-sonnet-5)",
+        "resume (0.90, claude-sonnet-5)"
+      ],
+      "first_confident_frame": 1790382091.003113,
+      "resumed": 1790382099.023442,
+      "moving_again": 1790382099.064,
+      "ms": {
+        "first_frame_to_paused": 497,
+        "paused_to_resumed": 7523,
+        "resumed_to_moving": 41
+      }
+    },
+    {
+      "paused": 1790382123.669991,
+      "check": "hand_overview",
+      "detail": "laya-vision: hand_overview on overview P(yes)=0.86/0.88/0.90",
+      "decisions": [
+        "wait (0.90, claude-sonnet-5)",
+        "resume (0.90, claude-sonnet-5)"
+      ],
+      "first_confident_frame": 1790382123.211599,
+      "resumed": 1790382131.503467,
+      "moving_again": 1790382131.551,
+      "ms": {
+        "first_frame_to_paused": 458,
+        "paused_to_resumed": 7833,
+        "resumed_to_moving": 48
+      }
+    },
+    {
+      "paused": 1790382153.578332,
+      "check": "hand_overview",
+      "detail": "laya-vision: hand_overview on overview P(yes)=0.83/0.87/0.81",
+      "decisions": [
+        "wait (0.85, claude-sonnet-5)",
+        "resume (0.90, claude-sonnet-5)"
+      ],
+      "first_confident_frame": 1790382153.097968,
+      "resumed": 1790382162.02144,
+      "moving_again": 1790382162.061,
+      "ms": {
+        "first_frame_to_paused": 480,
+        "paused_to_resumed": 8443,
+        "resumed_to_moving": 40
+      }
+    },
+    {
+      "paused": 1790382191.105043,
+      "check": "hand_overview",
+      "detail": "laya-vision: hand_overview on overview P(yes)=0.83/0.85/0.83",
+      "decisions": [
+        "wait (0.80, claude-sonnet-5)",
+        "resume (0.90, claude-sonnet-5)"
+      ],
+      "first_confident_frame": 1790382190.609044,
+      "resumed": 1790382198.7839239,
+      "moving_again": 1790382198.823,
+      "ms": {
+        "first_frame_to_paused": 496,
+        "paused_to_resumed": 7679,
+        "resumed_to_moving": 39
+      }
+    }
+  ]
+}
