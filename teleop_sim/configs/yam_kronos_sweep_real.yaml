@@ -1,0 +1,74 @@
+# Straight-line sweeps with no target, on gem13's RIGHT arm: a test bed for
+# the contact and hazard monitors (teleop_sim/tasks/linear_sweep.py).
+#
+#   python scripts/run_sweep.py teleop_sim/configs/yam_kronos_sweep_real.yaml \
+#       --host pantheon-gem13 --camera-port 5557 --contact-monitor enforce --hazard-monitor
+#
+# Put a hand or an object in the gripper's path; the report says how soon the
+# arm stopped and how soon it went on. Operator at the e-stop throughout.
+
+robot:
+  type: robots_realtime
+  # gem13's arm as measured (end_effectors/kronos_gem13.yaml): 2 deg tool pitch,
+  # wrist camera pose fitted to real images, D405 fov, jaw travel. Planning and
+  # perception use it, so no pitch trim is needed.
+  spec: ../robots/specs/yam_kronos_gem13.yaml
+  # A direct Ethernet link to the rig is IPv6 link-local only, which ZMQ will
+  # not use, and it drops every minute or so. Tunnel the bus over SSH and point
+  # here with --host 127.0.0.1 --ports 15555 15556 (see README, sim-to-real).
+  host: pantheon-gem13.local
+  arm: yam_right
+  cmd_topic: hud/teleop/yam_right/joint_pos   # gem13_inference.yaml's RobotNode input
+  state_topic: yam_right/joint_state
+  cameras:
+    wrist: right_wrist_cam/rgb      # D405 on the right Kronos
+    overview: exo_cam/rgb           # overhead D405; semantics only, no geometry
+  # gem13's follower limits (J2/J3 floors at 0: the rest pose sits at ~0 after
+  # set_zero), with yam_right's tighter J6 from gem13_inference.yaml. Provisional
+  # on the rig too.
+  joint_limits:
+    - [-2.09, 3.14]
+    - [0.0, 3.14]
+    - [0.0, 3.14]
+    - [-1.35, 1.35]
+    - [-1.50, 1.50]
+    - [-2.00, 2.00]
+  max_step_rad: 0.25        # far below the rig's max_command_error guard
+  # The direct Ethernet link drops for tens of seconds every minute or so. Wait
+  # it out: nothing is sent meanwhile, the rig holds the arm, the task resumes.
+  link_grace_s: 90
+
+source:
+  type: policy
+  policy:
+    type: linear_sweep
+    # Gripper tip path, arm base frame (m). Clear of the table (z >= 0.10 at
+    # the bottom of the down stroke) and in front of the arm, away from the
+    # cups' usual spots on the right-hand side.
+    center: [0.42, -0.05, 0.22]
+    travel_x: 0.08          # front/back stroke: center -+ 8 cm
+    travel_z: 0.06          # down/up stroke: center -+ 6 cm (lowest point 16 cm)
+    pitch_deg: 10.0
+    tip_speed: 0.08         # m/s average along the lines (peak 0.15 m/s mid-stroke,
+                            # minimum-jerk profile: no kick at the reversals)
+    cycles: 10
+    pause_s: 0.3
+    max_joint_speed: 0.4    # peak joint speed of the moves between the lines
+    settle_seconds: 0.3
+    # gem13 sags below its commands; walk the command off by the shortfall.
+    sag_compensation: true
+    arrive_timeout: 0.6     # short settle between lines; the sweep has nothing to hit precisely
+
+success: {type: never}
+reset: {type: none}
+
+safety:
+  type: sim_watchdog        # step/time bound; hardware limits live in robots_realtime
+  max_steps: 30000
+  max_seconds: 600
+  enforce_workspace: false
+
+task:
+  name: gem13_linear_sweep
+
+seed: 0

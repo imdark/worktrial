@@ -1,0 +1,41 @@
+# The same straight-line sweeps in MuJoCo, on the calibrated gem13 model, to
+# check the path before running it on the rig:
+#
+#   python scripts/run_sweep.py teleop_sim/configs/yam_kronos_sweep_sim.yaml --fast
+
+robot:
+  type: mujoco
+  spec: ../robots/specs/yam_kronos_gem13.yaml
+  scene: ../scenes/gem13_cell.yaml
+
+source:
+  type: policy
+  policy:
+    type: linear_sweep
+    # Gripper tip path, arm base frame (m). Clear of the table (z >= 0.10 at
+    # the bottom of the down stroke) and in front of the arm, away from the
+    # cups' usual spots on the right-hand side.
+    center: [0.42, -0.05, 0.22]
+    travel_x: 0.08          # front/back stroke: center -+ 8 cm
+    travel_z: 0.06          # down/up stroke: center -+ 6 cm (lowest point 16 cm)
+    pitch_deg: 10.0
+    tip_speed: 0.08         # m/s average along the lines (peak 0.15 m/s mid-stroke,
+                            # minimum-jerk profile: no kick at the reversals)
+    cycles: 4
+    pause_s: 0.3
+    max_joint_speed: 0.4    # peak joint speed of the moves between the lines
+    settle_seconds: 0.3
+    arrive_timeout: 0.6     # short settle between lines; the sweep has nothing to hit precisely
+
+success: {type: never}
+reset: {type: none}
+
+safety:
+  type: sim_watchdog
+  max_steps: 30000
+  enforce_workspace: false
+
+task:
+  name: gem13_linear_sweep_sim
+
+seed: 0

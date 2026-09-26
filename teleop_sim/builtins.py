@@ -33,6 +33,7 @@ ROBOTS.declare("mujoco", "teleop_sim.robots.sim.mujoco_robot")
 ROBOTS.declare("robots_realtime", "teleop_sim.robots.real.rr_bridge")
 # VLM-guided pick / lift / place. Plans with MuJoCo kinematics, so declared.
 POLICIES.declare("pick_lift_place", "teleop_sim.tasks.pick_lift_place")
+POLICIES.declare("linear_sweep", "teleop_sim.tasks.linear_sweep")
 
 # Further heavyweight backends are declared the same way as they arrive:
 #
