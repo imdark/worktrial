@@ -26,6 +26,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from teleop_sim.control.safety.contact import with_contact_monitor  # noqa: E402
 from teleop_sim.control.safety.review import task_context  # noqa: E402
 from teleop_sim.control.safety.vision_hazard import with_hazard_monitor  # noqa: E402
 from teleop_sim.core.clock import ManualClock, WallClock  # noqa: E402
@@ -165,6 +166,15 @@ def main() -> int:
         help="opt in to the vision safety loop (configs/safety/vision_hazard.yaml); "
         "needs scripts/laya_server.py running",
     )
+    ap.add_argument(
+        "--contact-monitor",
+        nargs="?",
+        const="log",
+        choices=["log", "enforce"],
+        help="opt in to motor-torque contact detection: 'log' (default) only records; "
+        "'enforce' stops, backs off and lets Claude decide (configs/safety/"
+        "contact_monitor.yaml); needs data/torque_models/gem13.json",
+    )
     args = ap.parse_args()
 
     config = RunConfig.from_yaml(args.config)
@@ -197,6 +207,8 @@ def main() -> int:
 
     if args.hazard_monitor:
         config.safety = with_hazard_monitor(config.safety)
+    if args.contact_monitor:
+        config.safety = with_contact_monitor(config.safety, mode=args.contact_monitor)
     is_sim = config.robot.get("type") == "mujoco"
     log = RunLog.timestamped(
         args.runs_dir, "probe" if args.probe else ("sim" if is_sim else "real")
@@ -213,7 +225,9 @@ def main() -> int:
     policy.bind(robot=system.robot, run_log=log, gate=make_gate() if confirm else None)
     if hasattr(system.safety, "bind"):
         context = task_context(policy.instruction)
-        system.safety.bind(run_log=log, robot=system.robot, context=context)
+        system.safety.bind(
+            run_log=log, robot=system.robot, context=context, phase_of=lambda: policy.phase
+        )
     if args.video:
         camera = policy.overview_camera or policy.wrist_camera
         system.loop.recorder = VideoRecorder(args.video, camera, system.spec.control_hz)

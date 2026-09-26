@@ -30,6 +30,7 @@ Protocol facts this relies on, read from robots_realtime on gem13:
 from __future__ import annotations
 
 import time
+from collections import deque
 from typing import Any
 
 import numpy as np
@@ -101,6 +102,7 @@ class RobotsRealtimeRobot(Robot):
         self._skew = 0.0  # local time.time() minus rig time.time()
         self._halted = False
         self._clipped_steps = 0
+        self._sent: deque[tuple[float, Action]] = deque(maxlen=300)  # ~10 s of commands
         self._kin = None
 
     # ------------------------------------------------------------ link
@@ -138,8 +140,7 @@ class RobotsRealtimeRobot(Robot):
             missing = [
                 t
                 for t in topics
-                if self._rec(t) is None
-                or self._rec(t).age() > max(self.state_timeout_s, 1.0)
+                if self._rec(t) is None or self._rec(t).age() > max(self.state_timeout_s, 1.0)
             ]
             if not missing:
                 return
@@ -194,8 +195,10 @@ class RobotsRealtimeRobot(Robot):
         if rec is None or rec.age() > self.state_timeout_s:
             started = time.monotonic()
             if self.link_grace_s > 3.0:
-                print(f"[rr] link to {self.host} stalled; holding (rig holds the arm), "
-                      f"waiting up to {self.link_grace_s:.0f}s")
+                print(
+                    f"[rr] link to {self.host} stalled; holding (rig holds the arm), "
+                    f"waiting up to {self.link_grace_s:.0f}s"
+                )
             try:
                 self._wait_for([self.state_topic], self.link_grace_s)
             except RobotLinkLost as exc:
@@ -218,8 +221,9 @@ class RobotsRealtimeRobot(Robot):
             if "rgb_jpeg" in msg["images"]:  # from camera_relay.py: JPEG of RGB
                 import cv2
 
-                bgr = cv2.imdecode(np.frombuffer(msg["images"]["rgb_jpeg"], np.uint8),
-                                   cv2.IMREAD_COLOR)
+                bgr = cv2.imdecode(
+                    np.frombuffer(msg["images"]["rgb_jpeg"], np.uint8), cv2.IMREAD_COLOR
+                )
                 rgb = bgr[:, :, ::-1]
             else:
                 rgb = np.asarray(msg["images"]["rgb"], dtype=np.uint8)
@@ -281,7 +285,23 @@ class RobotsRealtimeRobot(Robot):
         if not self._halted:
             joint_pos = np.append(target, 1.0 - action.gripper)  # rr: 1.0 = open
             self._pub.publish(self.cmd_topic, {"joint_pos": joint_pos}, ts=time.time() - self._skew)
-        return action.replace_values(target)
+        sent = action.replace_values(target)
+        self._sent.append((time.monotonic(), sent))
+        return sent
+
+    def recent_commands(self) -> list[tuple[float, Action]]:
+        """The last ~10 s of commands sent, oldest first, as (monotonic time, action)."""
+        return list(self._sent)
+
+    def command_before(self, seconds: float) -> Action | None:
+        """The command sent ``seconds`` ago (or the oldest kept, ~10 s): somewhere the
+        arm was just heading through, so free of whatever it met since. Safety
+        monitors back off to it after a contact."""
+        if not self._sent:
+            return None
+        cutoff = time.monotonic() - seconds
+        older = [a for t, a in self._sent if t <= cutoff]
+        return older[-1] if older else self._sent[0][1]
 
     def safe_stop(self) -> None:
         """Stop commanding. The RobotNode holds the last pose after 0.5 s of silence."""

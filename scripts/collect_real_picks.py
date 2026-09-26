@@ -32,6 +32,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from teleop_sim.control.safety.contact import with_contact_monitor  # noqa: E402
 from teleop_sim.control.safety.review import task_context  # noqa: E402
 from teleop_sim.control.safety.vision_hazard import with_hazard_monitor  # noqa: E402
 from teleop_sim.core.config import RunConfig, build_system  # noqa: E402
@@ -83,6 +84,15 @@ def main() -> int:
         action="store_true",
         help="opt in to the vision safety loop (configs/safety/vision_hazard.yaml)",
     )
+    ap.add_argument(
+        "--contact-monitor",
+        nargs="?",
+        const="log",
+        choices=["log", "enforce"],
+        help="opt in to motor-torque contact detection: 'log' (default) only records; "
+        "'enforce' stops, backs off and lets Claude decide (configs/safety/"
+        "contact_monitor.yaml); needs data/torque_models/gem13.json",
+    )
     args = ap.parse_args()
 
     config = RunConfig.from_yaml(args.config)
@@ -92,6 +102,8 @@ def main() -> int:
         config.robot["camera_port"] = args.camera_port
     if args.hazard_monitor:
         config.safety = with_hazard_monitor(config.safety)
+    if args.contact_monitor:
+        config.safety = with_contact_monitor(config.safety, mode=args.contact_monitor)
     system = build_system(config)
     policy = system.source.policy
     batch = args.out or ROOT / "runs" / f"collect_{time.strftime('%Y%m%d-%H%M%S')}"
@@ -111,7 +123,10 @@ def main() -> int:
             policy.bind(robot=system.robot, run_log=log, gate=None)
             if hasattr(system.safety, "bind"):
                 system.safety.bind(
-                    run_log=log, robot=system.robot, context=task_context(policy.instruction)
+                    phase_of=lambda: policy.phase,
+                    run_log=log,
+                    robot=system.robot,
+                    context=task_context(policy.instruction),
                 )
             system.loop.recorder = TelemetryRecorder(
                 ep,

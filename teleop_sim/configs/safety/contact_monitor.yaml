@@ -1,0 +1,28 @@
+# Opt-in motor-torque contact detection (teleop_sim/control/safety/contact.py).
+# Off by default; run_pick.py / collect_real_picks.py --contact-monitor [log|enforce]
+# wrap the run's own safety monitor in this one (it becomes `inner`).
+#
+# log (the default): record each detected contact in contact_checks.jsonl; the
+#   arm is never stopped.
+# enforce: on a contact the arm stops, backs off to where it was commanded
+#   retreat_s ago (a spot it just passed through, so clear of whatever it met),
+#   and holds (backs off 3 cm along the path it just travelled). Claude then sees the frames from the moment of contact and fresh
+#   ones and decides: resume (not a collision -- the pick carries on), wait
+#   (hold, look again), or abort (safe stop, episode over). No answer from
+#   Claude, or still unclear after max_hold_s, aborts.
+#
+# Needs data/torque_models/gem13.json: python scripts/fit_torque_model.py ...
+type: contact_monitor
+params: data/torque_models/gem13.json
+mode: log
+retreat_m: 0.03                   # back off 3 cm along the path just travelled
+glide_speed: 0.3                  # rad/s peak when gliding back before resuming
+review:
+  type: claude
+  fast_model: claude-sonnet-5     # decides; an unsure resume or abort goes to Opus
+  smart_model: claude-opus-5-5
+  escalate_below: 0.6              # Opus only when Sonnet is quite unsure
+  resume_confidence: 0.7          # below this a "resume" is treated as "wait"
+  wait_s: 2.0
+  max_hold_s: 60.0                # under link_grace_s, so the bridge waits it out
+  max_alarms: 6                   # per episode; one more than that stops the arm
