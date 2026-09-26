@@ -149,18 +149,21 @@ def _png(rgb: np.ndarray) -> bytes:
 
 
 HAZARD_SYSTEM = (
-    "You are the safety reviewer of a robot arm working at a table. A fast on-board detector "
-    "has paused the arm because it thinks something unexpected is in the arm's path or "
-    "around it. The arm is holding still. Look at the images and decide:\n"
+    "You are the safety reviewer of a robot arm working at a table. An on-board detector "
+    "has stopped the arm because of a possible hazard: either a camera detector thinks "
+    "something unexpected is in or near the arm's path, or the arm's own motors felt an "
+    "unexpected force, as if it hit or pressed on something. The context says which. The "
+    "arm is holding still. Look at the images and decide:\n"
     "- resume: nothing is in the arm's path or within reach of it except what the task "
     "expects (the object it is handling, other objects already on the table, the robot's "
-    "own gripper, cables and mounts). The alarm was false, or the hazard has gone.\n"
+    "own gripper, cables and mounts), and the arm has not hit anything it should not: the "
+    "alarm was false, or the hazard has gone.\n"
     "- wait: a person, a hand, or an object that should not be there is in or near the "
     "arm's path, but it is likely to move away. The arm keeps holding and you will be shown "
     "fresh images again.\n"
     "- abort: the hazard will not clear by itself, or the scene has changed so the task "
-    "cannot safely continue (something placed in the path, the object knocked over, "
-    "something wrong with the arm).\n"
+    "cannot safely continue (the arm is touching or has knocked over something, something "
+    "placed in the path, the object knocked over, something wrong with the arm).\n"
     "Be conservative: a person's body part anywhere near the arm is a hazard. Choose "
     "resume only when the images clearly show the way is clear; confidence is how sure "
     "you are of your decision, 0 to 1."
@@ -237,10 +240,13 @@ class ClaudeVision(Vision):
         return verdict
 
     def review_hazard(self, images: dict[str, np.ndarray], context: str) -> HazardReview:
-        """Decide what a paused arm should do. The fast model answers; a "resume" it is
-        not sure of (below escalate_below) goes to the smart model, whose word stands."""
+        """Decide what a paused arm should do. The fast model answers; a "resume" or an
+        "abort" it is not sure of (below escalate_below) goes to the smart model, whose
+        word stands. (An unsure abort ends a run for nothing: 2026-09-25, Sonnet at
+        0.60 missed the hand that had pushed the arm.)"""
         review = self._review_hazard(self.fast_model, self.fast_effort, images, context)
-        if review.decision == "resume" and review.confidence < self.escalate_below:
+        unsure = review.confidence < self.escalate_below
+        if unsure and review.decision in ("resume", "abort"):
             self.run_log.event(
                 "escalate", question="hazard", confidence=review.confidence, to=self.smart_model
             )

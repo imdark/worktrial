@@ -12,7 +12,7 @@ holds its pose. Claude (Sonnet 5; an unsure "resume" goes to Opus 5.5) is shown
 the alarm frame and fresh frames and decides: resume (a false alarm, or the
 hazard has gone -- the motion carries on), wait (hold, look again in wait_s),
 or abort (safe stop, episode over). No answer from Claude, still unclear after
-max_hold_s, or more than max_reviews alarms in an episode aborts. Without a
+max_hold_s, or more than max_alarms alarms in an episode aborts. Without a
 ``review`` section an alarm aborts at once.
 
 Off by default. ``--hazard-monitor`` on scripts/run_pick.py and
@@ -60,11 +60,11 @@ from typing import Any
 
 import numpy as np
 
+from teleop_sim.control.safety.review import ClaudeReview, Reviewer
 from teleop_sim.core.protocols import Robot, SafetyMonitor, SafetyVerdict
 from teleop_sim.core.registry import SAFETY, build, register
 from teleop_sim.core.spec import RobotSpec
 from teleop_sim.core.types import Observation, Outcome
-from teleop_sim.perception.vision import HazardReview
 from teleop_sim.runlog import RunLog
 
 HAND_QUESTION = "Is a person's hand or arm visible in the image?"
@@ -148,15 +148,6 @@ class HazardTracker:
 
 #: (image, questions) -> {check name: P(yes)}; raises on failure.
 Asker = Callable[[np.ndarray, dict[str, dict[str, str]]], dict[str, float]]
-#: (images, context) -> HazardReview; raises on failure.
-Reviewer = Callable[[dict[str, np.ndarray], str], HazardReview]
-
-DEFAULT_CONTEXT = (
-    "The robot is picking up a cup from the table, lifting it and putting it back. Cups "
-    "on the table, the robot's own gripper and its cables are expected."
-)
-
-
 #: The opt-in settings --hazard-monitor applies (run_pick.py, collect_real_picks.py).
 DEFAULT_CONFIG = Path(__file__).resolve().parents[2] / "configs" / "safety" / "vision_hazard.yaml"
 
@@ -170,22 +161,6 @@ def with_hazard_monitor(
     wrapped = dict(yaml.safe_load(Path(config).read_text()))
     wrapped["inner"] = dict(safety or {"type": "sim_watchdog"})
     return wrapped
-
-
-def task_context(instruction: str) -> str:
-    """What the reviewer should expect to see, for a pick-lift-place instruction."""
-    return (
-        f"The robot's task: {instruction}. It picks that object up, lifts it and puts it "
-        "down again. Other objects already on the table, the robot's own gripper, its "
-        "cables and mounts are expected; nothing else should be in or near its path."
-    )
-
-
-def claude_reviewer(run_log: RunLog | None = None, **vision_kwargs: Any) -> Reviewer:
-    from teleop_sim.perception.claude_vision import ClaudeVision
-
-    vision = ClaudeVision(run_log=run_log, **vision_kwargs)
-    return vision.review_hazard
 
 
 def laya_asker(endpoint: str, timeout_s: float) -> Asker:
@@ -231,22 +206,7 @@ class VisionHazardMonitor(SafetyMonitor):
         self.clock, self.sleep = clock, sleep
         self.log_dir = Path(log_dir) if log_dir else None
         # review: None -> an alarm ends the episode at once (no second opinion).
-        review = dict(review) if review is not None else None
-        self.review_cfg = review
-        self.wait_s = float((review or {}).pop("wait_s", 3.0))
-        self.max_hold_s = float((review or {}).pop("max_hold_s", 60.0))
-        self.max_reviews = int((review or {}).pop("max_reviews", 6))
-        self.resume_confidence = float((review or {}).pop("resume_confidence", 0.7))
-        if review is not None:
-            kind = review.pop("type", "claude")
-            if kind != "claude":
-                raise ValueError(f"vision_hazard: unknown review type {kind!r}")
-        self._reviewer = reviewer
-        self._own_reviewer = reviewer is None
-        self.robot: Robot | None = None
-        self.run_log = RunLog(None)
-        self.context = DEFAULT_CONTEXT
-        self.n_reviews = 0
+        self.review = ClaudeReview(review, reviewer, clock=clock, sleep=sleep, name="hazard")
         self._lock = threading.Lock()
         self._wake = threading.Event()
         self._stop = threading.Event()
@@ -267,16 +227,15 @@ class VisionHazardMonitor(SafetyMonitor):
         run_log: RunLog | None = None,
         robot: Robot | None = None,
         context: str | None = None,
+        **kw: Any,
     ) -> None:
         """The run's log (hazard_checks.jsonl, frames, Claude's reviews go there), the
         robot to read fresh frames from while paused, and what the task expects to see."""
         if run_log is not None:
-            self.run_log = run_log
             self.log_dir = run_log.root
-        if robot is not None:
-            self.robot = robot
-        if context:
-            self.context = context
+        self.review.bind(run_log=run_log, robot=robot, context=context)
+        if self.inner is not None and hasattr(self.inner, "bind"):
+            self.inner.bind(run_log=run_log, robot=robot, context=context, **kw)
 
     # ------------------------------------------------------------ SafetyMonitor
 
@@ -286,9 +245,8 @@ class VisionHazardMonitor(SafetyMonitor):
         self._halt_thread()
         self.tracker.reset()
         self._slot, self._unanswered_since, self._trip, self._error = None, None, None, None
-        self.last_answers, self.n_answers, self.n_reviews = {}, 0, 0
-        if self.review_cfg is not None and self._own_reviewer:  # log to this run
-            self._reviewer = claude_reviewer(run_log=self.run_log, **self.review_cfg)
+        self.last_answers, self.n_answers = {}, 0
+        self.review.reset()
         self._preflight()
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, name="vision-hazard", daemon=True)
@@ -300,6 +258,7 @@ class VisionHazardMonitor(SafetyMonitor):
             if verdict is not None:
                 return verdict
         now = self.clock()
+        self.review.note_baseline(obs, self.tracker.cameras())
         images = {c: obs.images[c] for c in self.tracker.cameras() if c in obs.images}
         with self._lock:
             trip, error = self._trip, self._error
@@ -315,7 +274,7 @@ class VisionHazardMonitor(SafetyMonitor):
             )
             if trip.image is not None:
                 self._save_image(f"alarm_{trip.check}", trip.image)
-            if self._reviewer is None:
+            if not self.review.enabled:
                 return SafetyVerdict(Outcome.WATCHDOG, f"hazard:{trip.check}", alarm, True)
             return self._pause_and_review(obs, trip, alarm)
         if waiting_since is not None and now - waiting_since > self.max_blind_s:
@@ -339,79 +298,37 @@ class VisionHazardMonitor(SafetyMonitor):
         motion carries on from where it stopped.
         """
         print(f"[safety] PAUSE: {alarm}; asking Claude", flush=True)
-        self.run_log.event(
+        self.review.run_log.event(
             "hazard_pause",
             check=trip.check,
             camera=trip.camera,
             p=[round(p, 3) for p in trip.history],
         )
         self._log({"event": "pause", "check": trip.check, "detail": alarm})
-        paused_at = self.clock()
-        latest = obs
-        while True:
-            if self.n_reviews >= self.max_reviews:
-                return self._abort(trip, f"{self.n_reviews} reviews this episode; {alarm}")
-            self.n_reviews += 1
-            images = {
-                f"{c} (now)": latest.images[c] for c in self.tracker.cameras() if c in latest.images
-            }
-            if trip.image is not None:
-                images = {f"{trip.camera} (frame that raised the alarm)": trip.image, **images}
-            context = (
-                f"{self.context}\n\nThe detector's alarm: {trip.check} -- asked "
+        alarm_images = (
+            {f"{trip.camera} (frame that raised the alarm)": trip.image}
+            if trip.image is not None
+            else {}
+        )
+
+        def describe(held_s: float) -> str:
+            return (
+                f"The alarm came from the camera detector: {trip.check} -- asked "
                 f"{self._question(trip.check)!r} of the {trip.camera} camera, it answered "
-                f"yes with probability "
+                "yes with probability "
                 + "/".join(f"{p:.2f}" for p in trip.history)
                 + f" on {len(trip.history)} frames in a row. The arm has been holding for "
-                f"{self.clock() - paused_at:.0f}s."
+                f"{held_s:.0f}s."
             )
-            try:
-                review = self._reviewer(images, context)
-            except Exception as exc:  # no second opinion -> fail closed
-                return self._abort(trip, f"Claude could not review ({exc}); {alarm}")
-            self.run_log.event(
-                "hazard_review",
-                decision=review.decision,
-                hazard=review.hazard,
-                confidence=review.confidence,
-                reason=review.reason,
-                model=review.model,
-            )
-            self._log(
-                {
-                    "event": "review",
-                    "decision": review.decision,
-                    "hazard": review.hazard,
-                    "confidence": review.confidence,
-                    "reason": review.reason,
-                    "model": review.model,
-                }
-            )
-            if (
-                review.decision == "resume"
-                and not review.hazard
-                and (review.confidence >= self.resume_confidence)
-            ):
-                print(f"[safety] RESUME ({review.model}): {review.reason}", flush=True)
-                with self._lock:
-                    self.tracker.reset()
-                    self._trip, self._unanswered_since = None, None
-                return None
-            if review.decision == "abort":
-                return self._abort(trip, f"Claude: {review.reason}")
-            # "wait", or a "resume" Claude is not sure of: hold and look again
-            if self.robot is None:
-                return self._abort(trip, f"cannot look again without a robot; {review.reason}")
-            if self.clock() - paused_at + self.wait_s > self.max_hold_s:
-                return self._abort(
-                    trip, f"still unclear after {self.max_hold_s:.0f}s; {review.reason}"
-                )
-            print(
-                f"[safety] HOLD ({review.decision}, {review.confidence:.2f}): {review.reason}",
-                flush=True,
-            )
-            self.sleep(self.wait_s)
-            latest = self.robot.get_observation()
+
+        why = self.review.decide(alarm_images, obs, self.tracker.cameras(), describe, log=self._log)
+        if why is not None:
+            return self._abort(trip, f"{why}; {alarm}")
+        with self._lock:
+            self.tracker.reset()
+            self._trip, self._unanswered_since = None, None
+        self._log({"event": "resume"})
+        return None
 
     def _abort(self, trip: HazardTrip, detail: str) -> SafetyVerdict:
         return SafetyVerdict(Outcome.WATCHDOG, f"hazard:{trip.check}", detail, safe_stop=True)

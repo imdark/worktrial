@@ -32,10 +32,8 @@ import numpy as np
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from teleop_sim.control.safety.vision_hazard import (  # noqa: E402
-    task_context,
-    with_hazard_monitor,
-)
+from teleop_sim.control.safety.review import task_context  # noqa: E402
+from teleop_sim.control.safety.vision_hazard import with_hazard_monitor  # noqa: E402
 from teleop_sim.core.config import RunConfig, build_system  # noqa: E402
 from teleop_sim.runlog import RunLog  # noqa: E402
 from teleop_sim.telemetry import TelemetryRecorder  # noqa: E402

@@ -14,10 +14,10 @@ type: vision_hazard
 endpoint: http://127.0.0.1:8765
 review:
   type: claude
-  fast_model: claude-sonnet-5     # decides; an unsure "resume" goes to Opus
+  fast_model: claude-sonnet-5     # decides; an unsure resume or abort goes to Opus
   smart_model: claude-opus-5-5
   escalate_below: 0.8
   resume_confidence: 0.7          # below this a "resume" is treated as "wait"
   wait_s: 3.0
   max_hold_s: 60.0                # under link_grace_s, so the bridge waits it out
-  max_reviews: 6                  # per episode; more alarms than that aborts
+  max_alarms: 6                   # per episode; one more than that stops the arm
